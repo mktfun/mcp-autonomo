@@ -13,69 +13,41 @@ Deno.serve(async (req) => {
   try {
     const { apiKey, settings } = await req.json();
 
-    // Cria um cliente Supabase COM A AUTENTICAÇÃO DO USUÁRIO
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_ANON_KEY') ?? '',
       { global: { headers: { Authorization: req.headers.get('Authorization')! } } }
     );
 
-    // Verifica se o usuário está autenticado
-    const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
-    
-    if (authError || !user) {
-      throw new Error('Usuário não autenticado');
-    }
+    const { data: { user } } = await supabaseClient.auth.getUser();
+    if (!user) throw new Error('User not authenticated');
 
-    console.log('Atualizando configurações para o usuário:', user.id);
-
-    // 1. Atualiza as configurações não-sensíveis (se houver)
+    // 1. Atualiza as configurações não-sensíveis na tabela de perfis
     if (settings) {
-      const { error: updateError } = await supabaseClient
+      const { error: profileError } = await supabaseClient
         .from('user_profiles')
         .update(settings)
         .eq('id', user.id);
 
-      if (updateError) {
-        console.error('Erro ao atualizar configurações:', updateError);
-        throw updateError;
-      }
-      
-      console.log('Configurações não-sensíveis atualizadas com sucesso');
+      if (profileError) throw profileError;
     }
 
-    // 2. Chama a função SEGURA do banco de dados para criptografar e salvar a chave
+    // 2. Se uma nova API key foi enviada, chama a função do Vault para salvá-la de forma segura
     if (apiKey) {
-      console.log('Criptografando API key de forma segura...');
-      
-      const { error: rpcError } = await supabaseClient.rpc('securely_update_user_api_key', {
+      const { error: rpcError } = await supabaseClient.rpc('update_user_api_key_in_vault', {
         api_key_plaintext: apiKey,
       });
-
-      if (rpcError) {
-        console.error('Erro ao criptografar API key:', rpcError);
-        throw rpcError;
-      }
-      
-      console.log('API key criptografada e salva com sucesso');
+      if (rpcError) throw rpcError;
     }
 
-    return new Response(
-      JSON.stringify({ message: 'Configurações salvas com segurança!' }), 
-      {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 200,
-      }
-    );
-  } catch (error) {
-    console.error('Erro geral:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
-    return new Response(
-      JSON.stringify({ error: errorMessage }), 
-      {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 400,
-      }
-    );
+    return new Response(JSON.stringify({ message: 'Configurações salvas com segurança!' }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      status: 200,
+    });
+  } catch (error: any) {
+    return new Response(JSON.stringify({ error: error.message }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      status: 400,
+    });
   }
 });

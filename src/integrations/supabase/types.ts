@@ -14,13 +14,100 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      projects: {
+        Row: {
+          created_at: string
+          description: string | null
+          encrypted_github_pat: string | null
+          encrypted_supabase_api_key: string | null
+          github_repo_name: string | null
+          github_repo_owner: string | null
+          id: string
+          name: string
+          supabase_project_url: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          encrypted_github_pat?: string | null
+          encrypted_supabase_api_key?: string | null
+          github_repo_name?: string | null
+          github_repo_owner?: string | null
+          id?: string
+          name: string
+          supabase_project_url?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          encrypted_github_pat?: string | null
+          encrypted_supabase_api_key?: string | null
+          github_repo_name?: string | null
+          github_repo_owner?: string | null
+          id?: string
+          name?: string
+          supabase_project_url?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      user_profiles: {
+        Row: {
+          ai_model: string | null
+          ai_provider: string | null
+          encrypted_api_key: string | null
+          id: string
+          system_instruction: string | null
+          temperature: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          ai_model?: string | null
+          ai_provider?: string | null
+          encrypted_api_key?: string | null
+          id: string
+          system_instruction?: string | null
+          temperature?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          ai_model?: string | null
+          ai_provider?: string | null
+          encrypted_api_key?: string | null
+          id?: string
+          system_instruction?: string | null
+          temperature?: number | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      decrypt_api_key: {
+        Args: { encrypted_key: string }
+        Returns: string
+      }
+      update_project_encrypted_secrets: {
+        Args: {
+          p_github_pat?: string
+          p_project_id: string
+          p_supabase_api_key?: string
+        }
+        Returns: Json
+      }
+      update_user_api_key_in_vault: {
+        Args: { api_key_plaintext: string }
+        Returns: undefined
+      }
+      update_user_encrypted_api_key: {
+        Args: { p_api_key: string }
+        Returns: Json
+      }
     }
     Enums: {
       [_ in never]: never

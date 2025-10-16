@@ -7,7 +7,6 @@ const corsHeaders = {
 };
 
 serve(async (req) => {
-  // Handle CORS preflight requests
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
@@ -19,7 +18,7 @@ serve(async (req) => {
       throw new Error("projectId and message are required");
     }
 
-    // Initialize Supabase client
+    // Initialize Supabase client with service role for Vault access
     const supabaseClient = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
@@ -45,7 +44,7 @@ serve(async (req) => {
     // Fetch user's AI configuration
     const { data: userProfile, error: profileError } = await supabaseClient
       .from("user_profiles")
-      .select("ai_model, encrypted_api_key, system_instruction, temperature")
+      .select("ai_model, system_instruction, temperature")
       .eq("id", user.id)
       .single();
 
@@ -53,25 +52,27 @@ serve(async (req) => {
       throw new Error("Failed to fetch user profile: " + profileError.message);
     }
 
-    if (!userProfile.encrypted_api_key) {
+    console.log("User profile fetched:", userProfile.ai_model);
+
+    // Fetch API key from Vault
+    const secretName = `gemini_api_key_${user.id}`;
+    const { data: vaultSecrets, error: vaultError } = await supabaseClient
+      .from("vault.decrypted_secrets")
+      .select("decrypted_secret")
+      .eq("name", secretName)
+      .maybeSingle();
+
+    if (vaultError) {
+      console.error("Vault error:", vaultError);
+      throw new Error("Failed to fetch API key from Vault");
+    }
+
+    if (!vaultSecrets?.decrypted_secret) {
       throw new Error("API key not configured. Please add your Gemini API key in Settings.");
     }
 
-    console.log("User profile fetched:", userProfile.ai_model);
-
-    // Decrypt the API key
-    const { data: decryptedData, error: decryptError } = await supabaseClient.rpc(
-      "decrypt_api_key",
-      { encrypted_key: userProfile.encrypted_api_key }
-    );
-
-    if (decryptError) {
-      console.error("Decryption error:", decryptError);
-      throw new Error("Failed to decrypt API key");
-    }
-
-    const apiKey = decryptedData;
-    console.log("API key decrypted successfully");
+    const apiKey = vaultSecrets.decrypted_secret;
+    console.log("API key fetched from Vault successfully");
 
     // Prepare the prompt
     let fullPrompt = "";
@@ -136,28 +137,21 @@ serve(async (req) => {
               break;
             }
 
-            // Decode the chunk
             const chunk = decoder.decode(value, { stream: true });
-            
-            // Parse the JSON response from Gemini
-            // Gemini returns newline-delimited JSON objects
             const lines = chunk.split("\n").filter(line => line.trim());
             
             for (const line of lines) {
               try {
                 const json = JSON.parse(line);
                 
-                // Extract text from the response
                 if (json.candidates && json.candidates[0]?.content?.parts) {
                   const text = json.candidates[0].content.parts[0]?.text || "";
                   
                   if (text) {
-                    // Send the text chunk to the client
                     controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text })}\n\n`));
                   }
                 }
               } catch (e) {
-                // Skip invalid JSON lines
                 console.log("Skipping invalid JSON:", line);
               }
             }
