@@ -102,26 +102,65 @@ serve(async (req) => {
 
     console.log("Project fetched:", project);
 
-    // STEP 1: Analyze user intent and determine if tools are needed
+    // Get Lovable API key
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) {
       throw new Error("LOVABLE_API_KEY is not configured");
     }
 
-    // Analyze if we need to use tools
-    const toolAnalysisPrompt = `You are an AI assistant that determines if a user's message requires accessing external tools.
+    // Define available tools for the AI
+    const availableTools = [
+      {
+        type: "function",
+        function: {
+          name: "list_github_files",
+          description: "Lists all files in the user's GitHub repository. Use this when the user asks about files, repository structure, or what's in their repo.",
+          parameters: {
+            type: "object",
+            properties: {},
+            required: []
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "get_supabase_schema",
+          description: "Gets the database schema from the user's Supabase project, including all tables and their columns. Use this when the user asks about their database, tables, or schema.",
+          parameters: {
+            type: "object",
+            properties: {},
+            required: []
+          }
+        }
+      }
+    ];
 
-Available tools:
-- list_github_files: Lists files in the user's GitHub repository
-- get_supabase_schema: Gets the database schema from the user's Supabase project
+    // Build system prompt
+    let systemPrompt = userProfile?.system_instruction || 
+      "You are a helpful AI assistant that helps users with their projects. Keep answers clear and concise.";
 
-Analyze this user message and determine if any tools are needed. If tools are needed, respond with JSON format:
-{"tool": "tool_name", "reason": "why this tool is needed"}
+    systemPrompt += `
 
-If no tools are needed, respond with:
-{"tool": "none", "reason": "can answer directly"}
+## AVAILABLE TOOLS
 
-User message: "${message}"`;
+You have access to tools that can fetch real-time information about the user's project:
+- list_github_files: Lists files in their GitHub repository
+- get_supabase_schema: Gets their database schema
+
+Use these tools when the user asks questions that require this information.
+`;
+
+    // STEP 1: First AI call with function calling to determine if tools are needed
+    const messagesForAnalysis = [
+      { role: "system", content: systemPrompt },
+      ...(chatHistory || []).slice(-10).map((msg: any) => ({
+        role: msg.role === "user" ? "user" : "assistant",
+        content: msg.content,
+      }))
+    ];
+
+    console.log(`Step 1: Analyzing user intent with ${messagesForAnalysis.length} messages`);
 
     const analysisResp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
@@ -131,32 +170,36 @@ User message: "${message}"`;
       },
       body: JSON.stringify({
         model: "google/gemini-2.5-flash",
-        messages: [{ role: "user", content: toolAnalysisPrompt }],
-        stream: false,
+        messages: messagesForAnalysis,
+        tools: availableTools,
+        temperature: userProfile?.temperature ?? 0.7,
       }),
     });
 
     if (!analysisResp.ok) {
-      console.error("Tool analysis failed:", await analysisResp.text());
+      console.error("Analysis call failed:", await analysisResp.text());
       throw new Error("Failed to analyze user intent");
     }
 
     const analysisData = await analysisResp.json();
-    const analysisContent = analysisData.choices[0].message.content;
-    console.log("Tool analysis result:", analysisContent);
+    const analysisMessage = analysisData.choices[0].message;
+    
+    console.log("Analysis result:", JSON.stringify(analysisMessage));
 
+    // STEP 2: Execute tool if requested
     let toolResult = null;
     let toolUsed = "none";
-    
-    try {
-      const analysis = JSON.parse(analysisContent);
+    let toolCallId = null;
+
+    if (analysisMessage.tool_calls && analysisMessage.tool_calls.length > 0) {
+      const toolCall = analysisMessage.tool_calls[0];
+      toolUsed = toolCall.function.name;
+      toolCallId = toolCall.id;
       
-      if (analysis.tool !== "none") {
-        console.log(`Invoking tool: ${analysis.tool}`);
-        toolUsed = analysis.tool;
-        
-        // Invoke the appropriate tool
-        if (analysis.tool === "list_github_files") {
+      console.log(`Step 2: Executing tool: ${toolUsed}`);
+
+      try {
+        if (toolUsed === "list_github_files") {
           const toolResp = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/tool-list-github-files`, {
             method: "POST",
             headers: {
@@ -167,8 +210,8 @@ User message: "${message}"`;
           });
           
           toolResult = await toolResp.json();
-          console.log("GitHub files tool result:", toolResult);
-        } else if (analysis.tool === "get_supabase_schema") {
+          console.log("GitHub tool executed, success:", toolResult.success);
+        } else if (toolUsed === "get_supabase_schema") {
           const toolResp = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/tool-get-supabase-schema`, {
             method: "POST",
             headers: {
@@ -179,71 +222,61 @@ User message: "${message}"`;
           });
           
           toolResult = await toolResp.json();
-          console.log("Supabase schema tool result:", toolResult);
+          console.log("Supabase tool executed, success:", toolResult.success);
         }
+      } catch (e) {
+        console.error("Error executing tool:", e);
+        const errorMessage = e instanceof Error ? e.message : String(e);
+        toolResult = { success: false, error: errorMessage };
       }
-    } catch (e) {
-      console.error("Error parsing tool analysis or invoking tool:", e);
-      // Continue without tool result
     }
 
-    // Build system prompt with tool results
-    let systemPrompt = userProfile?.system_instruction || 
-      "You are a helpful AI assistant. Keep answers clear and concise.";
-
-    if (toolResult && toolResult.success) {
-      systemPrompt += `
-
-## TOOL RESULT (${toolUsed})
-
-`;
-      
-      if (toolUsed === "list_github_files" && toolResult.files) {
-        systemPrompt += `Repository: ${toolResult.repository}
-Total files: ${toolResult.totalFiles}
-
-Files:
-${toolResult.files.slice(0, 100).map((f: any) => `- ${f.path}`).join('\n')}
-
-Use this information to answer the user's question about their GitHub repository.
-`;
-      } else if (toolUsed === "get_supabase_schema" && toolResult.schema) {
-        systemPrompt += `Database Project: ${toolResult.projectUrl}
-Total tables: ${toolResult.totalTables}
-
-Schema:
-${toolResult.schema.map((t: any) => `
-Table: ${t.tableName}
-Columns:
-${t.columns.map((c: any) => `  - ${c.name} (${c.type})${c.nullable ? ' NULL' : ' NOT NULL'}${c.default ? ` DEFAULT ${c.default}` : ''}`).join('\n')}
-`).join('\n')}
-
-Use this schema information to answer the user's question about their database.
-`;
-      }
-    } else if (toolResult && !toolResult.success) {
-      systemPrompt += `
-
-## TOOL ERROR
-
-The requested tool (${toolUsed}) encountered an error: ${toolResult.error}
-
-Please inform the user that the integration is not configured or there was an error accessing the data.
-`;
-    }
-
-    // PASSO 3: Montar o array de mensagens com o histórico completo
-    const messagesForAI = [
+    // STEP 3: Build messages for final response
+    const messagesForResponse = [
       { role: "system", content: systemPrompt },
       ...(chatHistory || []).map((msg: any) => ({
         role: msg.role === "user" ? "user" : "assistant",
         content: msg.content,
-      })),
+      }))
     ];
 
-    console.log(`Calling Lovable AI Gateway with ${messagesForAI.length} messages`);
+    // If a tool was used, add the tool call and result to the conversation
+    if (toolCallId && toolResult) {
+      messagesForResponse.push({
+        role: "assistant" as const,
+        content: null as any,
+        tool_calls: [{
+          id: toolCallId,
+          type: "function" as const,
+          function: {
+            name: toolUsed,
+            arguments: "{}"
+          }
+        }]
+      } as any);
 
-    // PASSO 4: Call Lovable AI Gateway
+      // Add tool result
+      let toolResultContent = "";
+      if (toolResult.success) {
+        if (toolUsed === "list_github_files" && toolResult.files) {
+          toolResultContent = `Repository: ${toolResult.repository}\nTotal files: ${toolResult.totalFiles}\n\nFiles (first 100):\n${toolResult.files.slice(0, 100).map((f: any) => `- ${f.path}`).join('\n')}`;
+        } else if (toolUsed === "get_supabase_schema" && toolResult.schema) {
+          toolResultContent = `Database: ${toolResult.projectUrl}\nTotal tables: ${toolResult.totalTables}\n\nSchema:\n${toolResult.schema.map((t: any) => `Table: ${t.tableName}\n${t.columns.map((c: any) => `  - ${c.name} (${c.type})${c.nullable ? ' NULL' : ' NOT NULL'}`).join('\n')}`).join('\n\n')}`;
+        }
+      } else {
+        toolResultContent = `Error: ${toolResult.error || 'Integration not configured'}`;
+      }
+
+      messagesForResponse.push({
+        role: "tool" as const,
+        tool_call_id: toolCallId,
+        content: toolResultContent
+      } as any);
+    }
+
+    console.log(`Step 3: Generating final response with ${messagesForResponse.length} messages`);
+
+    // STEP 4: Final AI call to generate response
     const aiResp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -252,7 +285,7 @@ Please inform the user that the integration is not configured or there was an er
       },
       body: JSON.stringify({
         model: "google/gemini-2.5-flash",
-        messages: messagesForAI,
+        messages: messagesForResponse,
         stream: true,
         temperature: userProfile?.temperature ?? 0.7,
       }),
@@ -302,7 +335,18 @@ Please inform the user that the integration is not configured or there was an er
     const stream = new ReadableStream({
       async start(controller) {
         let buffer = "";
-        let accumulatedResponse = ""; // Para salvar no banco depois
+        let accumulatedResponse = "";
+        
+        // Send tool status event if a tool was used
+        if (toolUsed !== "none") {
+          const toolStatusMessage = toolUsed === "list_github_files" 
+            ? "Acessando GitHub..." 
+            : "Consultando Supabase...";
+          controller.enqueue(
+            encoder.encode(`data: ${JSON.stringify({ status: "tool", tool: toolUsed, message: toolStatusMessage })}\n\n`)
+          );
+        }
+        
         try {
           while (true) {
             const { done, value } = await reader.read();

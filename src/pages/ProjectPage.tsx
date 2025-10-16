@@ -27,6 +27,7 @@ interface ChatMessage {
   sender: 'user' | 'ai';
   message: string;
   isLoading?: boolean;
+  toolStatus?: string;
 }
 
 const ProjectPage = () => {
@@ -212,7 +213,19 @@ const ProjectPage = () => {
           if (line.startsWith("data: ")) {
             try {
               const data = JSON.parse(line.slice(6));
-              if (data.text) {
+              
+              // Handle tool status events
+              if (data.status === "tool") {
+                setChatHistory(prev => {
+                  const newHistory = [...prev];
+                  const lastMessage = newHistory[newHistory.length - 1];
+                  if (lastMessage.sender === 'ai') {
+                    lastMessage.toolStatus = data.message;
+                    lastMessage.isLoading = true;
+                  }
+                  return newHistory;
+                });
+              } else if (data.text) {
                 accumulatedText += data.text;
                 
                 // Update the AI message with accumulated text
@@ -222,6 +235,7 @@ const ProjectPage = () => {
                   if (lastMessage.sender === 'ai') {
                     lastMessage.message = accumulatedText;
                     lastMessage.isLoading = false;
+                    lastMessage.toolStatus = undefined;
                   }
                   return newHistory;
                 });
@@ -353,6 +367,7 @@ const ProjectPage = () => {
                       sender={msg.sender}
                       message={msg.message}
                       isLoading={msg.isLoading}
+                      toolStatus={msg.toolStatus}
                     />
                   ))}
                   {isProcessing && (

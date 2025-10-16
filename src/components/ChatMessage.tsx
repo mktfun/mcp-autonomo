@@ -5,9 +5,10 @@ interface ChatMessageProps {
   sender: 'user' | 'ai';
   message: string;
   isLoading?: boolean;
+  toolStatus?: string;
 }
 
-export const ChatMessage = ({ sender, message, isLoading }: ChatMessageProps) => {
+export const ChatMessage = ({ sender, message, isLoading, toolStatus }: ChatMessageProps) => {
   const isUser = sender === 'user';
   
   return (
@@ -28,7 +29,16 @@ export const ChatMessage = ({ sender, message, isLoading }: ChatMessageProps) =>
             </div>
           )}
           <div className="flex-1 min-w-0">
-            {isLoading && !message ? (
+            {toolStatus ? (
+              <div className="flex items-center gap-sm text-sm text-muted-foreground">
+                <div className="flex gap-xs">
+                  <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" style={{ animationDelay: '0ms' }}></div>
+                  <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" style={{ animationDelay: '150ms' }}></div>
+                  <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" style={{ animationDelay: '300ms' }}></div>
+                </div>
+                <span>{toolStatus}</span>
+              </div>
+            ) : isLoading && !message ? (
               <div className="flex items-center gap-sm text-sm text-muted-foreground">
                 <div className="flex gap-xs">
                   <div className="w-2 h-2 bg-primary rounded-full animate-pulse" style={{ animationDelay: '0ms' }}></div>
