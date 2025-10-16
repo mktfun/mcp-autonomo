@@ -46,7 +46,7 @@ serve(async (req) => {
     // Fetch user's AI configuration
     const { data: userProfile, error: profileError } = await supabaseAdmin
       .from("user_profiles")
-      .select("ai_model, system_instruction, temperature")
+      .select("system_instruction, temperature")
       .eq("id", user.id)
       .single();
 
@@ -54,29 +54,9 @@ serve(async (req) => {
       throw new Error("Failed to fetch user profile: " + profileError.message);
     }
 
-    console.log("User profile fetched:", userProfile.ai_model);
+    console.log("User profile fetched");
 
-    // Fetch API key from Vault (Phase 2: Fixed approach)
-    const secretName = `gemini_api_key_${user.id}`;
-    const { data: vaultSecrets, error: vaultError } = await supabaseAdmin
-      .from("vault.decrypted_secrets")
-      .select("decrypted_secret")
-      .eq("name", secretName)
-      .maybeSingle();
-
-    if (vaultError) {
-      console.error("Vault error:", vaultError);
-      throw new Error("Failed to fetch API key from Vault");
-    }
-
-    if (!vaultSecrets?.decrypted_secret) {
-      throw new Error("API key não configurada. Por favor, adicione sua Gemini API key nas Configurações.");
-    }
-
-    const apiKey = vaultSecrets.decrypted_secret;
-    console.log("API key fetched from Vault successfully");
-
-    // Phase 4: Fetch project details for contextualization
+    // Fetch project details for contextualization
     const { data: project, error: projectError } = await supabaseAdmin
       .from("projects")
       .select("supabase_project_url, github_repo_owner, github_repo_name")
@@ -165,100 +145,136 @@ serve(async (req) => {
       // Continue without context if it fails
     }
 
-    // Phase 4: Build the full prompt with context injection
-    let fullPrompt = "";
-    
-    if (userProfile.system_instruction) {
-      fullPrompt += `${userProfile.system_instruction}\n\n`;
-    }
-    
+    // Build system prompt with context
+    let systemPrompt = userProfile?.system_instruction || 
+      "You are a helpful AI assistant. Keep answers clear and concise.";
+
     if (supabaseContext || githubContext) {
-      fullPrompt += `## PROJECT CONTEXT\n\n`;
-      if (supabaseContext) fullPrompt += `${supabaseContext}\n`;
-      if (githubContext) fullPrompt += `${githubContext}\n`;
-      fullPrompt += `---\n\n`;
+      systemPrompt += `
+
+## PROJECT CONTEXT
+
+${supabaseContext || ""}
+
+${githubContext || ""}
+
+---
+`;
     }
-    
-    fullPrompt += `User: ${message}\nAssistant:`;
 
-    console.log("Calling Gemini API with model:", userProfile.ai_model);
+    // Get Lovable API key
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    if (!LOVABLE_API_KEY) {
+      throw new Error("LOVABLE_API_KEY is not configured");
+    }
 
-    // Call Gemini API with streaming
-    const geminiResponse = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${userProfile.ai_model}:streamGenerateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [
-                {
-                  text: fullPrompt,
-                },
-              ],
-            },
-          ],
-          generationConfig: {
-            temperature: userProfile.temperature || 0.7,
-            maxOutputTokens: 2048,
-          },
-        }),
+    console.log("Calling Lovable AI Gateway with model: google/gemini-2.5-flash");
+
+    // Call Lovable AI Gateway
+    const aiResp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${LOVABLE_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: message },
+        ],
+        stream: true,
+        temperature: userProfile?.temperature ?? 0.7,
+      }),
+    });
+
+    if (!aiResp.ok) {
+      if (aiResp.status === 429) {
+        return new Response(
+          JSON.stringify({ error: "Rate limits exceeded, please try again later." }),
+          {
+            status: 429,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
       }
-    );
-
-    if (!geminiResponse.ok) {
-      const errorText = await geminiResponse.text();
-      console.error("Gemini API error:", errorText);
-      throw new Error(`Gemini API error: ${errorText}`);
+      if (aiResp.status === 402) {
+        return new Response(
+          JSON.stringify({ 
+            error: "Payment required, please add funds to your Lovable AI workspace." 
+          }),
+          {
+            status: 402,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+      const errorText = await aiResp.text();
+      console.error("AI gateway error:", aiResp.status, errorText);
+      return new Response(
+        JSON.stringify({ error: "AI gateway error" }),
+        {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
     }
 
-    console.log("Gemini API response received, starting stream");
-
-    // Create a readable stream from the Gemini response
-    const reader = geminiResponse.body?.getReader();
+    // Stream the response, converting OpenAI format to our format
+    const reader = aiResp.body?.getReader();
     const encoder = new TextEncoder();
     const decoder = new TextDecoder();
 
     if (!reader) {
-      throw new Error("Failed to get response reader");
+      throw new Error("Failed to start stream");
     }
 
     const stream = new ReadableStream({
       async start(controller) {
+        let buffer = "";
         try {
           while (true) {
             const { done, value } = await reader.read();
-            
-            if (done) {
-              controller.close();
-              break;
-            }
+            if (done) break;
 
-            const chunk = decoder.decode(value, { stream: true });
-            const lines = chunk.split("\n").filter(line => line.trim());
-            
-            for (const line of lines) {
+            buffer += decoder.decode(value, { stream: true });
+
+            let newlineIndex;
+            while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
+              let line = buffer.slice(0, newlineIndex);
+              buffer = buffer.slice(newlineIndex + 1);
+
+              if (line.endsWith("\r")) line = line.slice(0, -1);
+              if (!line || line.startsWith(":")) continue;
+              if (!line.startsWith("data: ")) continue;
+
+              const jsonStr = line.slice(6).trim();
+              if (jsonStr === "[DONE]") {
+                controller.close();
+                return;
+              }
+
               try {
-                const json = JSON.parse(line);
+                const event = JSON.parse(jsonStr);
+                const chunk = event.choices?.[0]?.delta?.content;
                 
-                if (json.candidates && json.candidates[0]?.content?.parts) {
-                  const text = json.candidates[0].content.parts[0]?.text || "";
-                  
-                  if (text) {
-                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text })}\n\n`));
-                  }
+                if (typeof chunk === "string" && chunk.length > 0) {
+                  // Convert to our format: data: {"text": "..."}
+                  controller.enqueue(
+                    encoder.encode(`data: ${JSON.stringify({ text: chunk })}\n\n`)
+                  );
                 }
-              } catch (e) {
-                console.log("Skipping invalid JSON:", line);
+              } catch {
+                // Partial JSON, put it back in the buffer
+                buffer = line + "\n" + buffer;
+                break;
               }
             }
           }
-        } catch (error) {
-          console.error("Stream error:", error);
-          controller.error(error);
+          controller.close();
+        } catch (err) {
+          console.error("Stream error:", err);
+          controller.error(err);
         }
       },
     });
