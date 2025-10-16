@@ -108,26 +108,23 @@ serve(async (req) => {
       throw new Error("LOVABLE_API_KEY is not configured");
     }
 
-    // STEP 1: ANÁLISE DE INTENÇÃO - Qual ferramenta usar?
-    const toolAnalysisPrompt = `Você é um orquestrador de ferramentas. Dada a pergunta do usuário abaixo, decida se uma das seguintes ferramentas é necessária:
+    // ========== CHAMADA 1: O ROTEADOR ==========
+    const routerSystemPrompt = `Você é um roteador de tarefas. Sua única função é analisar a mensagem do usuário e decidir se uma das seguintes ferramentas é necessária: list_github_files ou get_supabase_schema. Responda APENAS com um JSON válido no formato {"tool_to_use": "NOME_DA_FERRAMENTA"} ou {"tool_to_use": "none"}. Não adicione nenhum outro texto.`;
+
+    const routerPrompt = `Analise esta mensagem do usuário e decida qual ferramenta usar:
+
+MENSAGEM DO USUÁRIO: "${message}"
 
 FERRAMENTAS DISPONÍVEIS:
-- list_github_files: Lista todos os arquivos no repositório GitHub do usuário. Use quando o usuário perguntar sobre arquivos, estrutura do repositório, ou o que há no repo.
-- get_supabase_schema: Obtém o schema do banco de dados Supabase do usuário, incluindo todas as tabelas e colunas. Use quando o usuário perguntar sobre banco de dados, tabelas, ou schema.
+- list_github_files: Use quando o usuário perguntar sobre arquivos, repositório, código, estrutura de pastas, ou o que há no GitHub
+- get_supabase_schema: Use quando o usuário perguntar sobre banco de dados, tabelas, schema, colunas, ou estrutura de dados
 
-PERGUNTA DO USUÁRIO: "${message}"
+Responda APENAS com o JSON.`;
 
-Responda APENAS com um JSON válido no formato:
-{"tool_to_use": "NOME_DA_FERRAMENTA"}
+    console.log("========== STEP 1: ROUTER CALL ==========");
+    console.log("User message:", message);
 
-OU se nenhuma ferramenta for necessária:
-{"tool_to_use": "none"}
-
-Não adicione markdown, código fence ou explicações. APENAS o JSON.`;
-
-    console.log("Step 1: Analyzing user intent");
-
-    const analysisResp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    const routerResp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${LOVABLE_API_KEY}`,
@@ -135,52 +132,58 @@ Não adicione markdown, código fence ou explicações. APENAS o JSON.`;
       },
       body: JSON.stringify({
         model: "google/gemini-2.5-flash",
-        messages: [{ role: "user", content: toolAnalysisPrompt }],
-        temperature: 0.1, // Low temperature for consistent JSON
+        messages: [
+          { role: "system", content: routerSystemPrompt },
+          { role: "user", content: routerPrompt }
+        ],
+        temperature: 0.1,
       }),
     });
 
-    if (!analysisResp.ok) {
-      console.error("Analysis call failed:", await analysisResp.text());
-      throw new Error("Failed to analyze user intent");
+    if (!routerResp.ok) {
+      const errorText = await routerResp.text();
+      console.error("Router call failed:", errorText);
+      throw new Error("Failed to route user intent");
     }
 
-    const analysisData = await analysisResp.json();
-    let analysisContent = analysisData.choices[0].message.content;
+    const routerData = await routerResp.json();
+    let routerContent = routerData.choices[0].message.content;
     
-    console.log("Raw analysis result:", analysisContent);
+    console.log("Raw router response:", routerContent);
 
-    // Clean up the response - remove markdown code blocks if present
-    analysisContent = analysisContent.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+    // Clean up the response - remove markdown, extra spaces, etc
+    routerContent = routerContent
+      .replace(/```json\s*/g, '')
+      .replace(/```\s*/g, '')
+      .replace(/^\s+|\s+$/g, '')
+      .trim();
     
-    console.log("Cleaned analysis result:", analysisContent);
+    console.log("Cleaned router response:", routerContent);
 
-    // STEP 2: EXECUTAR FERRAMENTA (se necessário)
+    // ========== LÓGICA DE ORQUESTRAÇÃO: EXECUTAR FERRAMENTA ==========
     let toolResult = null;
     let toolUsed = "none";
+    let rawToolData = null;
     
     try {
-      const analysis = JSON.parse(analysisContent);
-      toolUsed = analysis.tool_to_use;
+      const routerDecision = JSON.parse(routerContent);
+      toolUsed = routerDecision.tool_to_use;
+      
+      console.log("========== STEP 2: TOOL EXECUTION ==========");
+      console.log("Tool to use:", toolUsed);
       
       if (toolUsed !== "none") {
-        console.log(`Step 2: Executing tool: ${toolUsed}`);
-
         try {
+          let toolUrl = "";
+          
           if (toolUsed === "list_github_files") {
-            const toolResp = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/tool-list-github-files`, {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${token}`,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({ projectId }),
-            });
-            
-            toolResult = await toolResp.json();
-            console.log("GitHub tool executed, success:", toolResult.success);
+            toolUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/tool-list-github-files`;
           } else if (toolUsed === "get_supabase_schema") {
-            const toolResp = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/tool-get-supabase-schema`, {
+            toolUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/tool-get-supabase-schema`;
+          }
+          
+          if (toolUrl) {
+            const toolResp = await fetch(toolUrl, {
               method: "POST",
               headers: {
                 Authorization: `Bearer ${token}`,
@@ -189,53 +192,66 @@ Não adicione markdown, código fence ou explicações. APENAS o JSON.`;
               body: JSON.stringify({ projectId }),
             });
             
-            toolResult = await toolResp.json();
-            console.log("Supabase tool executed, success:", toolResult.success);
+            rawToolData = await toolResp.json();
+            console.log(`Tool ${toolUsed} executed, success:`, rawToolData.success);
+            
+            if (rawToolData.success) {
+              console.log("Tool result summary:", {
+                tool: toolUsed,
+                hasData: !!rawToolData.files || !!rawToolData.schema,
+                fileCount: rawToolData.files?.length,
+                tableCount: rawToolData.schema?.length
+              });
+            } else {
+              console.error("Tool returned error:", rawToolData.error);
+            }
           }
         } catch (e) {
           console.error("Error executing tool:", e);
           const errorMessage = e instanceof Error ? e.message : String(e);
-          toolResult = { success: false, error: errorMessage };
+          rawToolData = { success: false, error: errorMessage };
         }
+      } else {
+        console.log("No tool needed, proceeding without tool data");
       }
     } catch (e) {
-      console.error("Error parsing tool analysis:", e);
-      // If we can't parse the JSON, continue without tools
+      console.error("Error parsing router response:", e);
+      console.log("Will proceed without tools");
       toolUsed = "none";
     }
 
-    // STEP 3: CONSTRUIR PROMPT PARA RESPOSTA FINAL
-    let systemPrompt = userProfile?.system_instruction || 
-      "You are a helpful AI assistant that helps users with their projects. Keep answers clear and concise.";
+    // ========== CHAMADA 2: O TRADUTOR ==========
+    console.log("========== STEP 3: TRANSLATOR CALL ==========");
+    
+    // Build the translator system prompt
+    let translatorSystemPrompt = userProfile?.system_instruction || 
+      "Você é um assistente de desenvolvimento prestativo. Responda de forma clara e concisa.";
 
-    // Add tool result to system prompt if available
-    if (toolUsed !== "none" && toolResult) {
-      if (toolResult.success) {
-        systemPrompt += `\n\n## DADOS DA FERRAMENTA (${toolUsed})\n\n`;
-        
-        if (toolUsed === "list_github_files" && toolResult.files) {
-          systemPrompt += `Repositório: ${toolResult.repository}\nTotal de arquivos: ${toolResult.totalFiles}\n\nArquivos (primeiros 100):\n${toolResult.files.slice(0, 100).map((f: any) => `- ${f.path}`).join('\n')}\n\nUse estas informações para responder à pergunta do usuário sobre o repositório GitHub.`;
-        } else if (toolUsed === "get_supabase_schema" && toolResult.schema) {
-          systemPrompt += `Banco de dados: ${toolResult.projectUrl}\nTotal de tabelas: ${toolResult.totalTables}\n\nSchema:\n${toolResult.schema.map((t: any) => `Tabela: ${t.tableName}\nColunas:\n${t.columns.map((c: any) => `  - ${c.name} (${c.type})${c.nullable ? ' NULL' : ' NOT NULL'}`).join('\n')}`).join('\n\n')}\n\nUse estas informações do schema para responder à pergunta do usuário sobre o banco de dados.`;
-        }
-      } else {
-        systemPrompt += `\n\n## ERRO DA FERRAMENTA\n\nA ferramenta ${toolUsed} retornou erro: ${toolResult.error}\n\nInforme ao usuário que a integração não está configurada ou houve um erro ao acessar os dados.`;
+    // If we have tool data, add it to the system prompt
+    if (toolUsed !== "none" && rawToolData) {
+      translatorSystemPrompt += `\n\n---\nDADOS DA FERRAMENTA (${toolUsed}):\n`;
+      translatorSystemPrompt += JSON.stringify(rawToolData, null, 2);
+      translatorSystemPrompt += `\n---\n\nUse os dados brutos da ferramenta acima para formular uma resposta completa e amigável para o usuário.`;
+      
+      if (!rawToolData.success) {
+        translatorSystemPrompt += `\n\nIMPORTANTE: A ferramenta retornou erro. Informe ao usuário que a integração não está configurada ou que você não tem acesso aos dados.`;
       }
     }
 
-    // STEP 4: MONTAR MENSAGENS PARA RESPOSTA FINAL
-    const messagesForResponse = [
-      { role: "system", content: systemPrompt },
+    // Build messages for the translator
+    const translatorMessages = [
+      { role: "system", content: translatorSystemPrompt },
       ...(chatHistory || []).map((msg: any) => ({
         role: msg.role === "user" ? "user" : "assistant",
         content: msg.content,
       }))
     ];
 
-    console.log(`Step 3: Generating final response with ${messagesForResponse.length} messages, tool used: ${toolUsed}`);
+    console.log("Translator system prompt preview:", translatorSystemPrompt.substring(0, 200) + "...");
+    console.log("Total messages for translator:", translatorMessages.length);
 
-    // STEP 5: CHAMADA FINAL PARA GERAR RESPOSTA
-    const aiResp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    // STEP 4: FINAL AI CALL
+    const finalResp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${LOVABLE_API_KEY}`,
@@ -243,14 +259,14 @@ Não adicione markdown, código fence ou explicações. APENAS o JSON.`;
       },
       body: JSON.stringify({
         model: "google/gemini-2.5-flash",
-        messages: messagesForResponse,
+        messages: translatorMessages,
         stream: true,
         temperature: userProfile?.temperature ?? 0.7,
       }),
     });
 
-    if (!aiResp.ok) {
-      if (aiResp.status === 429) {
+    if (!finalResp.ok) {
+      if (finalResp.status === 429) {
         return new Response(
           JSON.stringify({ error: "Rate limits exceeded, please try again later." }),
           {
@@ -259,7 +275,7 @@ Não adicione markdown, código fence ou explicações. APENAS o JSON.`;
           }
         );
       }
-      if (aiResp.status === 402) {
+      if (finalResp.status === 402) {
         return new Response(
           JSON.stringify({ 
             error: "Payment required, please add funds to your Lovable AI workspace." 
@@ -270,8 +286,8 @@ Não adicione markdown, código fence ou explicações. APENAS o JSON.`;
           }
         );
       }
-      const errorText = await aiResp.text();
-      console.error("AI gateway error:", aiResp.status, errorText);
+      const errorText = await finalResp.text();
+      console.error("Final AI call error:", finalResp.status, errorText);
       return new Response(
         JSON.stringify({ error: "AI gateway error" }),
         {
@@ -281,8 +297,8 @@ Não adicione markdown, código fence ou explicações. APENAS o JSON.`;
       );
     }
 
-    // Stream the response, converting OpenAI format to our format
-    const reader = aiResp.body?.getReader();
+    // Stream the response
+    const reader = finalResp.body?.getReader();
     const encoder = new TextEncoder();
     const decoder = new TextDecoder();
 
