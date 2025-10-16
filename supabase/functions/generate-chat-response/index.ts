@@ -109,7 +109,7 @@ serve(async (req) => {
     }
 
     // ========== CHAMADA 1: O ROTEADOR ==========
-    const routerSystemPrompt = `Você é um roteador de tarefas. Sua única função é analisar a mensagem do usuário e decidir se uma das seguintes ferramentas é necessária: list_github_files ou get_supabase_schema. Responda APENAS com um JSON válido no formato {"tool_to_use": "NOME_DA_FERRAMENTA"} ou {"tool_to_use": "none"}. Não adicione nenhum outro texto.`;
+    const routerSystemPrompt = `Você é um parser de JSON. Sua única função é analisar a mensagem e decidir se uma das ferramentas (list_github_files, get_supabase_schema) é necessária. Você DEVE responder APENAS com um JSON válido. Nenhum outro texto, saudação ou explicação é permitido. O formato é {"tool_to_use": "NOME_DA_FERRAMENTA"} ou {"tool_to_use": "none"}. Uma resposta fora deste formato é uma falha crítica.`;
 
     const routerPrompt = `Analise esta mensagem do usuário e decida qual ferramenta usar:
 
@@ -215,9 +215,10 @@ Responda APENAS com o JSON.`;
         console.log("No tool needed, proceeding without tool data");
       }
     } catch (e) {
-      console.error("Error parsing router response:", e);
-      console.log("Will proceed without tools");
+      console.error("Error parsing router response - AI did not return valid JSON:", e);
+      console.log("Falling back to no tool. Router content was:", routerContent);
       toolUsed = "none";
+      rawToolData = null;
     }
 
     // ========== CHAMADA 2: O TRADUTOR ==========
