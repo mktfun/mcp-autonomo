@@ -109,7 +109,8 @@ const Settings = () => {
         description: "Suas configurações de IA foram atualizadas com sucesso",
       });
 
-      setApiKey(""); // Limpa o campo da API key por segurança
+      // Limpa o campo da API key SOMENTE após sucesso
+      setApiKey("");
     } catch (error: any) {
       console.error("Error saving settings:", error);
       toast({
@@ -117,6 +118,7 @@ const Settings = () => {
         description: error.message,
         variant: "destructive",
       });
+      // NÃO limpa o campo aqui - deixa o usuário ver o que digitou
     } finally {
       setIsSaving(false);
     }

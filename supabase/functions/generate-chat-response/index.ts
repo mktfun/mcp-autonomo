@@ -18,8 +18,8 @@ serve(async (req) => {
       throw new Error("projectId and message are required");
     }
 
-    // Initialize Supabase client with service role for Vault access
-    const supabaseClient = createClient(
+    // Initialize Supabase Admin client for Vault access
+    const supabaseAdmin = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
       {
@@ -31,9 +31,11 @@ serve(async (req) => {
     );
 
     // Get the authenticated user
-    const authHeader = req.headers.get("Authorization")!;
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) throw new Error("No authorization header");
+    
     const token = authHeader.replace("Bearer ", "");
-    const { data: { user }, error: userError } = await supabaseClient.auth.getUser(token);
+    const { data: { user }, error: userError } = await supabaseAdmin.auth.getUser(token);
 
     if (userError || !user) {
       throw new Error("Unauthorized");
@@ -42,7 +44,7 @@ serve(async (req) => {
     console.log("User authenticated:", user.id);
 
     // Fetch user's AI configuration
-    const { data: userProfile, error: profileError } = await supabaseClient
+    const { data: userProfile, error: profileError } = await supabaseAdmin
       .from("user_profiles")
       .select("ai_model, system_instruction, temperature")
       .eq("id", user.id)
@@ -56,7 +58,7 @@ serve(async (req) => {
 
     // Fetch API key from Vault
     const secretName = `gemini_api_key_${user.id}`;
-    const { data: vaultSecrets, error: vaultError } = await supabaseClient
+    const { data: vaultSecrets, error: vaultError } = await supabaseAdmin
       .from("vault.decrypted_secrets")
       .select("decrypted_secret")
       .eq("name", secretName)
@@ -68,7 +70,7 @@ serve(async (req) => {
     }
 
     if (!vaultSecrets?.decrypted_secret) {
-      throw new Error("API key not configured. Please add your Gemini API key in Settings.");
+      throw new Error("API key não configurada. Por favor, adicione sua Gemini API key nas Configurações.");
     }
 
     const apiKey = vaultSecrets.decrypted_secret;

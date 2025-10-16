@@ -13,18 +13,24 @@ Deno.serve(async (req) => {
   try {
     const { apiKey, settings } = await req.json();
 
-    const supabaseClient = createClient(
+    // CLIENTE ADMIN (SERVICE_ROLE) - NECESSÁRIO PARA ACESSAR O VAULT
+    const supabaseAdmin = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-      { global: { headers: { Authorization: req.headers.get('Authorization')! } } }
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+      { auth: { persistSession: false } }
     );
 
-    const { data: { user } } = await supabaseClient.auth.getUser();
+    // Autentica o usuário a partir do token que o frontend enviou
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader) throw new Error('No authorization header');
+    
+    const token = authHeader.replace('Bearer ', '');
+    const { data: { user } } = await supabaseAdmin.auth.getUser(token);
     if (!user) throw new Error('User not authenticated');
 
     // 1. Atualiza as configurações não-sensíveis na tabela de perfis
     if (settings) {
-      const { error: profileError } = await supabaseClient
+      const { error: profileError } = await supabaseAdmin
         .from('user_profiles')
         .update(settings)
         .eq('id', user.id);
@@ -34,7 +40,7 @@ Deno.serve(async (req) => {
 
     // 2. Se uma nova API key foi enviada, chama a função do Vault para salvá-la de forma segura
     if (apiKey) {
-      const { error: rpcError } = await supabaseClient.rpc('update_user_api_key_in_vault', {
+      const { error: rpcError } = await supabaseAdmin.rpc('update_user_api_key_in_vault', {
         api_key_plaintext: apiKey,
       });
       if (rpcError) throw rpcError;
