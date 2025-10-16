@@ -56,7 +56,7 @@ serve(async (req) => {
 
     console.log("User profile fetched:", userProfile.ai_model);
 
-    // Fetch API key from Vault
+    // Fetch API key from Vault (Phase 2: Fixed approach)
     const secretName = `gemini_api_key_${user.id}`;
     const { data: vaultSecrets, error: vaultError } = await supabaseAdmin
       .from("vault.decrypted_secrets")
@@ -76,11 +76,109 @@ serve(async (req) => {
     const apiKey = vaultSecrets.decrypted_secret;
     console.log("API key fetched from Vault successfully");
 
-    // Prepare the prompt
+    // Phase 4: Fetch project details for contextualization
+    const { data: project, error: projectError } = await supabaseAdmin
+      .from("projects")
+      .select("supabase_project_url, github_repo_owner, github_repo_name")
+      .eq("id", projectId)
+      .eq("user_id", user.id)
+      .single();
+
+    if (projectError) {
+      console.error("Project fetch error:", projectError);
+      throw new Error("Failed to fetch project details");
+    }
+
+    console.log("Project fetched:", project);
+
+    // Phase 4: Fetch and decrypt project credentials
+    let supabaseContext = "";
+    let githubContext = "";
+
+    try {
+      const { data: projectCreds, error: credsError } = await supabaseAdmin.rpc('decrypt_project_credentials', {
+        p_project_id: projectId
+      });
+
+      if (credsError) {
+        console.error("Failed to decrypt project credentials:", credsError);
+      } else if (projectCreds && projectCreds.length > 0) {
+        const creds = projectCreds[0];
+
+        // Fetch Supabase schema context if configured
+        if (creds.supabase_api_key && project.supabase_project_url) {
+          console.log("Fetching Supabase context...");
+          try {
+            const projectSupabase = createClient(
+              project.supabase_project_url,
+              creds.supabase_api_key
+            );
+            
+            const { data: tables, error: tablesError } = await projectSupabase
+              .from('information_schema.tables')
+              .select('table_name')
+              .eq('table_schema', 'public');
+            
+            if (!tablesError && tables && tables.length > 0) {
+              supabaseContext = `### Database Schema (Supabase)\nTables:\n${tables.map(t => `- ${t.table_name}`).join('\n')}\n`;
+              console.log("Supabase context fetched:", tables.length, "tables");
+            }
+          } catch (e) {
+            console.error("Error fetching Supabase context:", e);
+          }
+        }
+
+        // Fetch GitHub repository structure if configured
+        if (creds.github_pat && project.github_repo_owner && project.github_repo_name) {
+          console.log("Fetching GitHub context...");
+          try {
+            const ghResponse = await fetch(
+              `https://api.github.com/repos/${project.github_repo_owner}/${project.github_repo_name}/git/trees/main?recursive=1`,
+              {
+                headers: {
+                  'Authorization': `token ${creds.github_pat}`,
+                  'Accept': 'application/vnd.github.v3+json',
+                  'User-Agent': 'Supabase-Edge-Function'
+                }
+              }
+            );
+            
+            if (ghResponse.ok) {
+              const { tree } = await ghResponse.json();
+              const files = tree
+                .filter((item: any) => item.type === 'blob')
+                .map((item: any) => item.path)
+                .slice(0, 100); // Limit to first 100 files
+              
+              githubContext = `### Repository Structure (GitHub)\nFiles (showing first 100):\n${files.join('\n')}\n`;
+              console.log("GitHub context fetched:", files.length, "files");
+            } else {
+              console.error("GitHub API error:", ghResponse.status, await ghResponse.text());
+            }
+          } catch (e) {
+            console.error("Error fetching GitHub context:", e);
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Error in contextualization phase:", e);
+      // Continue without context if it fails
+    }
+
+    // Phase 4: Build the full prompt with context injection
     let fullPrompt = "";
+    
     if (userProfile.system_instruction) {
       fullPrompt += `${userProfile.system_instruction}\n\n`;
     }
+    
+    if (supabaseContext || githubContext) {
+      fullPrompt += `## PROJECT CONTEXT\n\n`;
+      if (supabaseContext) fullPrompt += `${supabaseContext}\n`;
+      if (githubContext) fullPrompt += `${githubContext}\n`;
+      fullPrompt += `---\n\n`;
+    }
+    
     fullPrompt += `User: ${message}\nAssistant:`;
 
     console.log("Calling Gemini API with model:", userProfile.ai_model);

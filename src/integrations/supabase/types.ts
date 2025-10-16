@@ -92,6 +92,13 @@ export type Database = {
         Args: { encrypted_key: string }
         Returns: string
       }
+      decrypt_project_credentials: {
+        Args: { p_project_id: string }
+        Returns: {
+          github_pat: string
+          supabase_api_key: string
+        }[]
+      }
       update_project_encrypted_secrets: {
         Args: {
           p_github_pat?: string
