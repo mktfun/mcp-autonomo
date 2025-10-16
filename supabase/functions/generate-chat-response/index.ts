@@ -43,6 +43,37 @@ serve(async (req) => {
 
     console.log("User authenticated:", user.id);
 
+    // PASSO 1: Salvar a mensagem do usuário no banco
+    const { error: insertUserMsgError } = await supabaseAdmin
+      .from("chat_messages")
+      .insert({
+        project_id: projectId,
+        user_id: user.id,
+        role: "user",
+        content: message,
+      });
+
+    if (insertUserMsgError) {
+      console.error("Error saving user message:", insertUserMsgError);
+      throw new Error("Failed to save user message");
+    }
+
+    console.log("User message saved to database");
+
+    // PASSO 2: Buscar todo o histórico de mensagens
+    const { data: chatHistory, error: historyError } = await supabaseAdmin
+      .from("chat_messages")
+      .select("role, content")
+      .eq("project_id", projectId)
+      .order("created_at", { ascending: true });
+
+    if (historyError) {
+      console.error("Error fetching chat history:", historyError);
+      throw new Error("Failed to fetch chat history");
+    }
+
+    console.log(`Loaded ${chatHistory?.length || 0} messages from history`);
+
     // Fetch user's AI configuration
     const { data: userProfile, error: profileError } = await supabaseAdmin
       .from("user_profiles")
@@ -168,9 +199,18 @@ ${githubContext || ""}
       throw new Error("LOVABLE_API_KEY is not configured");
     }
 
-    console.log("Calling Lovable AI Gateway with model: google/gemini-2.5-flash");
+    // PASSO 3: Montar o array de mensagens com o histórico completo
+    const messagesForAI = [
+      { role: "system", content: systemPrompt },
+      ...(chatHistory || []).map((msg: any) => ({
+        role: msg.role === "user" ? "user" : "assistant",
+        content: msg.content,
+      })),
+    ];
 
-    // Call Lovable AI Gateway
+    console.log(`Calling Lovable AI Gateway with ${messagesForAI.length} messages`);
+
+    // PASSO 4: Call Lovable AI Gateway
     const aiResp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -179,10 +219,7 @@ ${githubContext || ""}
       },
       body: JSON.stringify({
         model: "google/gemini-2.5-flash",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: message },
-        ],
+        messages: messagesForAI,
         stream: true,
         temperature: userProfile?.temperature ?? 0.7,
       }),
@@ -232,6 +269,7 @@ ${githubContext || ""}
     const stream = new ReadableStream({
       async start(controller) {
         let buffer = "";
+        let accumulatedResponse = ""; // Para salvar no banco depois
         try {
           while (true) {
             const { done, value } = await reader.read();
@@ -250,6 +288,18 @@ ${githubContext || ""}
 
               const jsonStr = line.slice(6).trim();
               if (jsonStr === "[DONE]") {
+                // PASSO 5: Salvar a resposta completa da IA no banco
+                if (accumulatedResponse.trim()) {
+                  await supabaseAdmin
+                    .from("chat_messages")
+                    .insert({
+                      project_id: projectId,
+                      user_id: user.id,
+                      role: "ai",
+                      content: accumulatedResponse,
+                    });
+                  console.log("AI response saved to database");
+                }
                 controller.close();
                 return;
               }
@@ -259,6 +309,7 @@ ${githubContext || ""}
                 const chunk = event.choices?.[0]?.delta?.content;
                 
                 if (typeof chunk === "string" && chunk.length > 0) {
+                  accumulatedResponse += chunk;
                   // Convert to our format: data: {"text": "..."}
                   controller.enqueue(
                     encoder.encode(`data: ${JSON.stringify({ text: chunk })}\n\n`)
@@ -271,6 +322,20 @@ ${githubContext || ""}
               }
             }
           }
+          
+          // Salvar resposta se ainda não foi salva (fallback)
+          if (accumulatedResponse.trim()) {
+            await supabaseAdmin
+              .from("chat_messages")
+              .insert({
+                project_id: projectId,
+                user_id: user.id,
+                role: "ai",
+                content: accumulatedResponse,
+              });
+            console.log("AI response saved to database (final flush)");
+          }
+          
           controller.close();
         } catch (err) {
           console.error("Stream error:", err);

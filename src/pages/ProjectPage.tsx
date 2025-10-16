@@ -48,6 +48,7 @@ const ProjectPage = () => {
         setUserEmail(session.user.email || "");
         fetchProject();
         fetchAllProjects();
+        fetchChatHistory();
       }
     });
 
@@ -110,6 +111,29 @@ const ProjectPage = () => {
 
     if (data) {
       setProjects(data);
+    }
+  };
+
+  const fetchChatHistory = async () => {
+    if (!id) return;
+
+    const { data, error } = await (supabase as any)
+      .from("chat_messages")
+      .select("*")
+      .eq("project_id", id)
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      console.error("Error fetching chat history:", error);
+      return;
+    }
+
+    if (data) {
+      const formattedHistory: ChatMessage[] = data.map((msg: any) => ({
+        sender: msg.role as 'user' | 'ai',
+        message: msg.content
+      }));
+      setChatHistory(formattedHistory);
     }
   };
 
