@@ -102,101 +102,134 @@ serve(async (req) => {
 
     console.log("Project fetched:", project);
 
-    // Phase 4: Fetch and decrypt project credentials
-    let supabaseContext = "";
-    let githubContext = "";
-
-    try {
-      const { data: projectCreds, error: credsError } = await supabaseAdmin.rpc('decrypt_project_credentials', {
-        p_project_id: projectId
-      });
-
-      if (credsError) {
-        console.error("Failed to decrypt project credentials:", credsError);
-      } else if (projectCreds && projectCreds.length > 0) {
-        const creds = projectCreds[0];
-
-        // Fetch Supabase schema context if configured
-        if (creds.supabase_api_key && project.supabase_project_url) {
-          console.log("Fetching Supabase context...");
-          try {
-            const projectSupabase = createClient(
-              project.supabase_project_url,
-              creds.supabase_api_key
-            );
-            
-            const { data: tables, error: tablesError } = await projectSupabase
-              .from('information_schema.tables')
-              .select('table_name')
-              .eq('table_schema', 'public');
-            
-            if (!tablesError && tables && tables.length > 0) {
-              supabaseContext = `### Database Schema (Supabase)\nTables:\n${tables.map(t => `- ${t.table_name}`).join('\n')}\n`;
-              console.log("Supabase context fetched:", tables.length, "tables");
-            }
-          } catch (e) {
-            console.error("Error fetching Supabase context:", e);
-          }
-        }
-
-        // Fetch GitHub repository structure if configured
-        if (creds.github_pat && project.github_repo_owner && project.github_repo_name) {
-          console.log("Fetching GitHub context...");
-          try {
-            const ghResponse = await fetch(
-              `https://api.github.com/repos/${project.github_repo_owner}/${project.github_repo_name}/git/trees/main?recursive=1`,
-              {
-                headers: {
-                  'Authorization': `token ${creds.github_pat}`,
-                  'Accept': 'application/vnd.github.v3+json',
-                  'User-Agent': 'Supabase-Edge-Function'
-                }
-              }
-            );
-            
-            if (ghResponse.ok) {
-              const { tree } = await ghResponse.json();
-              const files = tree
-                .filter((item: any) => item.type === 'blob')
-                .map((item: any) => item.path)
-                .slice(0, 100); // Limit to first 100 files
-              
-              githubContext = `### Repository Structure (GitHub)\nFiles (showing first 100):\n${files.join('\n')}\n`;
-              console.log("GitHub context fetched:", files.length, "files");
-            } else {
-              console.error("GitHub API error:", ghResponse.status, await ghResponse.text());
-            }
-          } catch (e) {
-            console.error("Error fetching GitHub context:", e);
-          }
-        }
-      }
-    } catch (e) {
-      console.error("Error in contextualization phase:", e);
-      // Continue without context if it fails
-    }
-
-    // Build system prompt with context
-    let systemPrompt = userProfile?.system_instruction || 
-      "You are a helpful AI assistant. Keep answers clear and concise.";
-
-    if (supabaseContext || githubContext) {
-      systemPrompt += `
-
-## PROJECT CONTEXT
-
-${supabaseContext || ""}
-
-${githubContext || ""}
-
----
-`;
-    }
-
-    // Get Lovable API key
+    // STEP 1: Analyze user intent and determine if tools are needed
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) {
       throw new Error("LOVABLE_API_KEY is not configured");
+    }
+
+    // Analyze if we need to use tools
+    const toolAnalysisPrompt = `You are an AI assistant that determines if a user's message requires accessing external tools.
+
+Available tools:
+- list_github_files: Lists files in the user's GitHub repository
+- get_supabase_schema: Gets the database schema from the user's Supabase project
+
+Analyze this user message and determine if any tools are needed. If tools are needed, respond with JSON format:
+{"tool": "tool_name", "reason": "why this tool is needed"}
+
+If no tools are needed, respond with:
+{"tool": "none", "reason": "can answer directly"}
+
+User message: "${message}"`;
+
+    const analysisResp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${LOVABLE_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash",
+        messages: [{ role: "user", content: toolAnalysisPrompt }],
+        stream: false,
+      }),
+    });
+
+    if (!analysisResp.ok) {
+      console.error("Tool analysis failed:", await analysisResp.text());
+      throw new Error("Failed to analyze user intent");
+    }
+
+    const analysisData = await analysisResp.json();
+    const analysisContent = analysisData.choices[0].message.content;
+    console.log("Tool analysis result:", analysisContent);
+
+    let toolResult = null;
+    let toolUsed = "none";
+    
+    try {
+      const analysis = JSON.parse(analysisContent);
+      
+      if (analysis.tool !== "none") {
+        console.log(`Invoking tool: ${analysis.tool}`);
+        toolUsed = analysis.tool;
+        
+        // Invoke the appropriate tool
+        if (analysis.tool === "list_github_files") {
+          const toolResp = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/tool-list-github-files`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ projectId }),
+          });
+          
+          toolResult = await toolResp.json();
+          console.log("GitHub files tool result:", toolResult);
+        } else if (analysis.tool === "get_supabase_schema") {
+          const toolResp = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/tool-get-supabase-schema`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ projectId }),
+          });
+          
+          toolResult = await toolResp.json();
+          console.log("Supabase schema tool result:", toolResult);
+        }
+      }
+    } catch (e) {
+      console.error("Error parsing tool analysis or invoking tool:", e);
+      // Continue without tool result
+    }
+
+    // Build system prompt with tool results
+    let systemPrompt = userProfile?.system_instruction || 
+      "You are a helpful AI assistant. Keep answers clear and concise.";
+
+    if (toolResult && toolResult.success) {
+      systemPrompt += `
+
+## TOOL RESULT (${toolUsed})
+
+`;
+      
+      if (toolUsed === "list_github_files" && toolResult.files) {
+        systemPrompt += `Repository: ${toolResult.repository}
+Total files: ${toolResult.totalFiles}
+
+Files:
+${toolResult.files.slice(0, 100).map((f: any) => `- ${f.path}`).join('\n')}
+
+Use this information to answer the user's question about their GitHub repository.
+`;
+      } else if (toolUsed === "get_supabase_schema" && toolResult.schema) {
+        systemPrompt += `Database Project: ${toolResult.projectUrl}
+Total tables: ${toolResult.totalTables}
+
+Schema:
+${toolResult.schema.map((t: any) => `
+Table: ${t.tableName}
+Columns:
+${t.columns.map((c: any) => `  - ${c.name} (${c.type})${c.nullable ? ' NULL' : ' NOT NULL'}${c.default ? ` DEFAULT ${c.default}` : ''}`).join('\n')}
+`).join('\n')}
+
+Use this schema information to answer the user's question about their database.
+`;
+      }
+    } else if (toolResult && !toolResult.success) {
+      systemPrompt += `
+
+## TOOL ERROR
+
+The requested tool (${toolUsed}) encountered an error: ${toolResult.error}
+
+Please inform the user that the integration is not configured or there was an error accessing the data.
+`;
     }
 
     // PASSO 3: Montar o array de mensagens com o histórico completo

@@ -1,0 +1,149 @@
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  try {
+    const { projectId } = await req.json();
+
+    if (!projectId) {
+      throw new Error("projectId is required");
+    }
+
+    // Initialize Supabase Admin client
+    const supabaseAdmin = createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+      {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false,
+        },
+      }
+    );
+
+    // Get the authenticated user
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) throw new Error("No authorization header");
+    
+    const token = authHeader.replace("Bearer ", "");
+    const { data: { user }, error: userError } = await supabaseAdmin.auth.getUser(token);
+
+    if (userError || !user) {
+      throw new Error("Unauthorized");
+    }
+
+    console.log("Fetching GitHub files for user:", user.id, "project:", projectId);
+
+    // Fetch project details
+    const { data: project, error: projectError } = await supabaseAdmin
+      .from("projects")
+      .select("github_repo_owner, github_repo_name")
+      .eq("id", projectId)
+      .eq("user_id", user.id)
+      .single();
+
+    if (projectError || !project) {
+      throw new Error("Project not found or unauthorized");
+    }
+
+    if (!project.github_repo_owner || !project.github_repo_name) {
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          error: "GitHub integration not configured for this project" 
+        }),
+        {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    // Decrypt GitHub PAT
+    const { data: projectCreds, error: credsError } = await supabaseAdmin.rpc('decrypt_project_credentials', {
+      p_project_id: projectId
+    });
+
+    if (credsError || !projectCreds || projectCreds.length === 0 || !projectCreds[0].github_pat) {
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          error: "GitHub credentials not found" 
+        }),
+        {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    const githubPat = projectCreds[0].github_pat;
+
+    // Fetch repository tree from GitHub
+    console.log(`Fetching tree for ${project.github_repo_owner}/${project.github_repo_name}`);
+    const ghResponse = await fetch(
+      `https://api.github.com/repos/${project.github_repo_owner}/${project.github_repo_name}/git/trees/main?recursive=1`,
+      {
+        headers: {
+          'Authorization': `token ${githubPat}`,
+          'Accept': 'application/vnd.github.v3+json',
+          'User-Agent': 'Supabase-Edge-Function'
+        }
+      }
+    );
+
+    if (!ghResponse.ok) {
+      const errorText = await ghResponse.text();
+      console.error("GitHub API error:", ghResponse.status, errorText);
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          error: `GitHub API error: ${ghResponse.status}` 
+        }),
+        {
+          status: ghResponse.status,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    const { tree } = await ghResponse.json();
+    const files = tree
+      .filter((item: any) => item.type === 'blob')
+      .map((item: any) => ({
+        path: item.path,
+        size: item.size,
+        sha: item.sha
+      }));
+
+    console.log(`Found ${files.length} files in repository`);
+
+    return new Response(
+      JSON.stringify({ 
+        success: true, 
+        files,
+        repository: `${project.github_repo_owner}/${project.github_repo_name}`,
+        totalFiles: files.length
+      }),
+      {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      }
+    );
+  } catch (error: any) {
+    console.error("Error in tool-list-github-files:", error);
+    return new Response(
+      JSON.stringify({ success: false, error: error.message }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      }
+    );
+  }
+});

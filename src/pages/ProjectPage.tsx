@@ -26,6 +26,7 @@ interface Project {
 interface ChatMessage {
   sender: 'user' | 'ai';
   message: string;
+  isLoading?: boolean;
 }
 
 const ProjectPage = () => {
@@ -189,11 +190,12 @@ const ProjectPage = () => {
         throw new Error("Failed to get response reader");
       }
 
-      // Create initial AI message
+      // Create initial AI message with loading state
       const aiMessageId = Date.now();
       setChatHistory(prev => [...prev, {
         sender: 'ai',
-        message: ''
+        message: '',
+        isLoading: true
       }]);
 
       let accumulatedText = "";
@@ -219,6 +221,7 @@ const ProjectPage = () => {
                   const lastMessage = newHistory[newHistory.length - 1];
                   if (lastMessage.sender === 'ai') {
                     lastMessage.message = accumulatedText;
+                    lastMessage.isLoading = false;
                   }
                   return newHistory;
                 });
@@ -349,6 +352,7 @@ const ProjectPage = () => {
                       key={index}
                       sender={msg.sender}
                       message={msg.message}
+                      isLoading={msg.isLoading}
                     />
                   ))}
                   {isProcessing && (

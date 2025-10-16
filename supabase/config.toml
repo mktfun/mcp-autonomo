@@ -1,1 +1,16 @@
 project_id = "nvbhxsytawlvleiqgaxz"
+
+[functions.generate-chat-response]
+verify_jwt = false
+
+[functions.tool-list-github-files]
+verify_jwt = false
+
+[functions.tool-get-supabase-schema]
+verify_jwt = false
+
+[functions.update-project-secrets]
+verify_jwt = false
+
+[functions.update-user-settings]
+verify_jwt = false

@@ -4,9 +4,10 @@ import { cn } from "@/lib/utils";
 interface ChatMessageProps {
   sender: 'user' | 'ai';
   message: string;
+  isLoading?: boolean;
 }
 
-export const ChatMessage = ({ sender, message }: ChatMessageProps) => {
+export const ChatMessage = ({ sender, message, isLoading }: ChatMessageProps) => {
   const isUser = sender === 'user';
   
   return (
@@ -27,7 +28,18 @@ export const ChatMessage = ({ sender, message }: ChatMessageProps) => {
             </div>
           )}
           <div className="flex-1 min-w-0">
-            <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">{message}</p>
+            {isLoading && !message ? (
+              <div className="flex items-center gap-sm text-sm text-muted-foreground">
+                <div className="flex gap-xs">
+                  <div className="w-2 h-2 bg-primary rounded-full animate-pulse" style={{ animationDelay: '0ms' }}></div>
+                  <div className="w-2 h-2 bg-primary rounded-full animate-pulse" style={{ animationDelay: '150ms' }}></div>
+                  <div className="w-2 h-2 bg-primary rounded-full animate-pulse" style={{ animationDelay: '300ms' }}></div>
+                </div>
+                <span>Analisando e buscando dados...</span>
+              </div>
+            ) : (
+              <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">{message}</p>
+            )}
           </div>
           {isUser && (
             <div className="w-7 h-7 rounded-full bg-[#121212]/20 flex items-center justify-center flex-shrink-0">
