@@ -327,18 +327,14 @@ const ProjectPage = () => {
           <p className="text-sm text-muted-foreground">
             Interface de comando para gerenciar seu projeto
           </p>
-
-          {/* Abas */}
-          <Tabs defaultValue="command" className="flex-1 flex flex-col">
-            <TabsList className="grid w-full max-w-md grid-cols-2">
-              <TabsTrigger value="command">Comando</TabsTrigger>
-              <TabsTrigger value="settings">Configurações</TabsTrigger>
-            </TabsList>
-          </Tabs>
         </div>
 
-        {/* Conteúdo das Abas */}
+        {/* Abas com conteúdo unificado */}
         <Tabs defaultValue="command" className="flex-1 flex flex-col min-h-0">
+          <TabsList className="grid w-full max-w-md grid-cols-2 mb-md">
+            <TabsTrigger value="command">Comando</TabsTrigger>
+            <TabsTrigger value="settings">Configurações</TabsTrigger>
+          </TabsList>
           {/* Aba Comando (Chat) */}
           <TabsContent value="command" className="flex-1 flex flex-col min-h-0 mt-0">
             {/* Área de Histórico de Chat */}
