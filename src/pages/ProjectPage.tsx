@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -39,6 +39,7 @@ const ProjectPage = () => {
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const navigate = useNavigate();
   const { toast } = useToast();
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     // Verifica autenticação
@@ -64,6 +65,11 @@ const ProjectPage = () => {
 
     return () => subscription.unsubscribe();
   }, [navigate, id]);
+
+  // Auto-scroll to latest message
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatHistory]);
 
   const fetchProject = async () => {
     if (!id) {
@@ -279,8 +285,8 @@ const ProjectPage = () => {
       activeProjectId={id}
     >
       <div className="h-full flex flex-col">
-        {/* Cabeçalho do Projeto */}
-        <div className="space-y-sm mb-lg">
+        {/* Cabeçalho do Projeto - Sticky */}
+        <div className="sticky top-0 z-10 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 border-b border-border pb-md space-y-sm mb-lg">
           <h1 className="text-3xl font-bold flex items-center gap-sm">
             <Terminal className="w-8 h-8 text-primary" />
             {project?.name || "Projeto"}
@@ -304,15 +310,18 @@ const ProjectPage = () => {
           <p className="text-sm text-muted-foreground">
             Interface de comando para gerenciar seu projeto
           </p>
+
+          {/* Abas */}
+          <Tabs defaultValue="command" className="flex-1 flex flex-col">
+            <TabsList className="grid w-full max-w-md grid-cols-2">
+              <TabsTrigger value="command">Comando</TabsTrigger>
+              <TabsTrigger value="settings">Configurações</TabsTrigger>
+            </TabsList>
+          </Tabs>
         </div>
 
-        {/* Abas */}
-        <Tabs defaultValue="command" className="flex-1 flex flex-col">
-          <TabsList className="grid w-full max-w-md grid-cols-2 mb-md">
-            <TabsTrigger value="command">Comando</TabsTrigger>
-            <TabsTrigger value="settings">Configurações</TabsTrigger>
-          </TabsList>
-
+        {/* Conteúdo das Abas */}
+        <Tabs defaultValue="command" className="flex-1 flex flex-col min-h-0">
           {/* Aba Comando (Chat) */}
           <TabsContent value="command" className="flex-1 flex flex-col min-h-0 mt-0">
             {/* Área de Histórico de Chat */}
@@ -356,11 +365,12 @@ const ProjectPage = () => {
                       </div>
                     </div>
                   )}
+                  <div ref={messagesEndRef} />
                 </div>
               )}
             </div>
 
-            {/* Input de Comando */}
+            {/* Input de Comando - Fixo na parte inferior */}
             <div className="border-t border-border bg-card/30 backdrop-blur-sm p-md flex-shrink-0">
               <form onSubmit={handleSubmit} className="flex gap-sm">
                 <Input
@@ -396,7 +406,7 @@ const ProjectPage = () => {
           </TabsContent>
 
           {/* Aba Configurações */}
-          <TabsContent value="settings" className="mt-0">
+          <TabsContent value="settings" className="flex-1 overflow-y-auto mt-0 p-md">
             <div className="max-w-4xl">
               {id && project && (
                 <ProjectSettings 
