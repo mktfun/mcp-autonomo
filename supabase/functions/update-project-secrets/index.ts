@@ -27,22 +27,26 @@ Deno.serve(async (req) => {
       throw new Error('No authorization header');
     }
 
-    // Create Supabase client with the auth header
-    const supabaseClient = createClient(
+    // Extract token from Authorization header
+    const token = authHeader.replace('Bearer ', '');
+
+    // Create Supabase Admin client with SERVICE_ROLE_KEY
+    const supabaseAdmin = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
       {
+        auth: { persistSession: false },
         global: {
           headers: { Authorization: authHeader },
         },
       }
     );
 
-    // Get the authenticated user
+    // Get the authenticated user using the token
     const {
       data: { user },
       error: userError,
-    } = await supabaseClient.auth.getUser();
+    } = await supabaseAdmin.auth.getUser(token);
 
     if (userError || !user) {
       console.error('Auth error:', userError);
@@ -75,7 +79,7 @@ Deno.serve(async (req) => {
       if (githubRepoOwner) updateData.github_repo_owner = githubRepoOwner;
       if (githubRepoName) updateData.github_repo_name = githubRepoName;
 
-      const { error: updateError } = await supabaseClient
+      const { error: updateError } = await supabaseAdmin
         .from('projects')
         .update(updateData)
         .eq('id', projectId)
@@ -87,21 +91,21 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Then, encrypt and store sensitive fields using the database function
+    // Then, save sensitive fields to Vault using the database function
     if (supabaseApiKey || githubPat) {
-      const { data: functionResult, error: functionError } = await supabaseClient
-        .rpc('update_project_encrypted_secrets', {
+      const { error: rpcError } = await supabaseAdmin
+        .rpc('update_project_secrets_in_vault', {
           p_project_id: projectId,
           p_supabase_api_key: supabaseApiKey || null,
           p_github_pat: githubPat || null,
         });
 
-      if (functionError) {
-        console.error('Error encrypting secrets:', functionError);
-        throw functionError;
+      if (rpcError) {
+        console.error('Error saving secrets to Vault:', rpcError);
+        throw rpcError;
       }
 
-      console.log('Secrets encrypted successfully:', functionResult);
+      console.log('Secrets saved to Vault successfully');
     }
 
     return new Response(

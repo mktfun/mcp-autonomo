@@ -134,13 +134,13 @@ export type Database = {
           supabase_api_key: string
         }[]
       }
-      update_project_encrypted_secrets: {
+      update_project_secrets_in_vault: {
         Args: {
           p_github_pat?: string
           p_project_id: string
           p_supabase_api_key?: string
         }
-        Returns: Json
+        Returns: undefined
       }
       update_user_api_key_in_vault: {
         Args: { api_key_plaintext: string }
