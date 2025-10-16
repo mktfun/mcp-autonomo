@@ -1,6 +1,7 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Database, Github } from "lucide-react";
 import { Link } from "react-router-dom";
+import { cn } from "@/lib/utils";
 
 interface ProjectCardProps {
   id: string;
@@ -24,7 +25,10 @@ export const ProjectCard = ({ id, name, hasSupabase = false, hasGithub = false }
           <div className="flex items-center gap-md pt-sm border-t border-border">
             <div className="flex items-center gap-xs">
               <Database 
-                className={`w-4 h-4 ${hasSupabase ? 'text-primary' : 'text-muted-foreground/40'}`}
+                className={cn(
+                  "w-4 h-4 transition-colors",
+                  hasSupabase ? "text-green-500" : "text-muted-foreground opacity-30"
+                )}
               />
               <span className="text-xs text-muted-foreground">
                 {hasSupabase ? 'Conectado' : 'Não conectado'}
@@ -33,7 +37,10 @@ export const ProjectCard = ({ id, name, hasSupabase = false, hasGithub = false }
 
             <div className="flex items-center gap-xs">
               <Github 
-                className={`w-4 h-4 ${hasGithub ? 'text-primary' : 'text-muted-foreground/40'}`}
+                className={cn(
+                  "w-4 h-4 transition-colors",
+                  hasGithub ? "text-foreground" : "text-muted-foreground opacity-30"
+                )}
               />
               <span className="text-xs text-muted-foreground">
                 {hasGithub ? 'Conectado' : 'Não conectado'}

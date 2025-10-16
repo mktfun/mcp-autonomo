@@ -1,12 +1,15 @@
-import { Plus, FolderOpen, Settings } from "lucide-react";
+import { Plus, FolderOpen, Settings, Database, Github } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Link } from "react-router-dom";
+import { cn } from "@/lib/utils";
 
 interface Project {
   id: string;
   name: string;
   created_at: string;
+  supabase_project_url?: string | null;
+  github_repo_name?: string | null;
 }
 
 interface ProjectSidebarProps {
@@ -45,6 +48,9 @@ export const ProjectSidebar = ({ projects, onNewProject, activeProjectId }: Proj
             <div className="space-y-xs">
               {recentProjects.map((project) => {
                 const isActive = activeProjectId === project.id;
+                const hasSupabase = !!project.supabase_project_url;
+                const hasGithub = !!project.github_repo_name;
+                
                 return (
                   <Link
                     key={project.id}
@@ -55,8 +61,22 @@ export const ProjectSidebar = ({ projects, onNewProject, activeProjectId }: Proj
                         : 'hover:bg-white/5'
                     }`}
                   >
-                    <FolderOpen className={`w-4 h-4 ${isActive ? 'text-primary' : 'text-muted-foreground group-hover:text-primary'}`} />
-                    <span className="text-sm truncate">{project.name}</span>
+                    <FolderOpen className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-primary' : 'text-muted-foreground group-hover:text-primary'}`} />
+                    <span className="text-sm truncate flex-1">{project.name}</span>
+                    <div className="flex items-center gap-xs flex-shrink-0">
+                      <Database 
+                        className={cn(
+                          "w-3 h-3 transition-colors",
+                          hasSupabase ? "text-green-500" : "text-muted-foreground opacity-30"
+                        )}
+                      />
+                      <Github 
+                        className={cn(
+                          "w-3 h-3 transition-colors",
+                          hasGithub ? "text-foreground" : "text-muted-foreground opacity-30"
+                        )}
+                      />
+                    </div>
                   </Link>
                 );
               })}

@@ -4,7 +4,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Send, Loader2, Terminal } from "lucide-react";
+import { Send, Loader2, Terminal, Database, Github } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { supabase } from "@/lib/supabase";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
@@ -283,6 +284,22 @@ const ProjectPage = () => {
           <h1 className="text-3xl font-bold flex items-center gap-sm">
             <Terminal className="w-8 h-8 text-primary" />
             {project?.name || "Projeto"}
+            <div className="flex items-center gap-xs ml-auto" role="group" aria-label="Status das integrações">
+              <Database 
+                className={cn(
+                  "w-5 h-5 transition-colors",
+                  project?.supabase_project_url ? "text-green-500" : "text-muted-foreground opacity-30"
+                )}
+                aria-label={project?.supabase_project_url ? "Supabase conectado" : "Supabase não conectado"}
+              />
+              <Github 
+                className={cn(
+                  "w-5 h-5 transition-colors",
+                  project?.github_repo_name ? "text-foreground" : "text-muted-foreground opacity-30"
+                )}
+                aria-label={project?.github_repo_name ? "GitHub conectado" : "GitHub não conectado"}
+              />
+            </div>
           </h1>
           <p className="text-sm text-muted-foreground">
             Interface de comando para gerenciar seu projeto
