@@ -1,0 +1,97 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
+All colors MUST be HSL.
+*/
+
+@layer base {
+  :root {
+    /* MCP Dark Theme - Nuclear Reactor Control Aesthetic */
+    --background: 0 0% 7%;
+    --foreground: 0 0% 95%;
+
+    --card: 0 0% 10%;
+    --card-foreground: 0 0% 95%;
+
+    --popover: 0 0% 10%;
+    --popover-foreground: 0 0% 95%;
+
+    /* Primary: Reactor Core Orange-Red */
+    --primary: 16 100% 50%;
+    --primary-foreground: 0 0% 7%;
+    
+    /* Secondary: Pure Molten Orange */
+    --secondary: 39 100% 50%;
+    --secondary-foreground: 0 0% 7%;
+
+    --muted: 0 0% 15%;
+    --muted-foreground: 0 0% 60%;
+
+    --accent: 39 100% 50%;
+    --accent-foreground: 0 0% 7%;
+
+    /* Success: Clean Green */
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 95%;
+
+    /* Destructive: Strong Red */
+    --destructive: 354 70% 54%;
+    --destructive-foreground: 0 0% 95%;
+
+    /* Warning: Intense Amber */
+    --warning: 45 100% 51%;
+    --warning-foreground: 0 0% 7%;
+
+    --border: 0 0% 20%;
+    --input: 0 0% 15%;
+    --ring: 16 100% 50%;
+
+    --radius: 0.25rem;
+
+    /* Glow effects for reactor aesthetic */
+    --glow-primary: 0 0 20px hsl(16 100% 50% / 0.5);
+    --glow-secondary: 0 0 15px hsl(39 100% 50% / 0.4);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-mono;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-mono font-bold;
+  }
+
+  /* Custom Scrollbars */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #2A2A2A;
+    border-radius: 4px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #FFA500;
+    border-radius: 4px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #FF8C00;
+  }
+
+  /* Firefox */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #FFA500 #2A2A2A;
+  }
+}
