@@ -124,10 +124,25 @@ serve(async (req) => {
     if (!ghResponse.ok) {
       const errorText = await ghResponse.text();
       console.error("GitHub API error:", ghResponse.status, errorText);
+      
+      // Try to parse error message from GitHub response
+      let errorMessage = `GitHub API error: ${ghResponse.status}`;
+      try {
+        const errorJson = JSON.parse(errorText);
+        if (errorJson.message) {
+          errorMessage = errorJson.message;
+        }
+      } catch {
+        // If not JSON, use the text directly if it's not too long
+        if (errorText && errorText.length < 200) {
+          errorMessage = errorText;
+        }
+      }
+      
       return new Response(
         JSON.stringify({ 
           success: false, 
-          error: `GitHub API error: ${ghResponse.status}` 
+          error: errorMessage 
         }),
         {
           status: ghResponse.status,

@@ -124,7 +124,7 @@ serve(async (req) => {
       return new Response(
         JSON.stringify({ 
           success: false, 
-          error: "Failed to fetch schema information" 
+          error: schemaError.message || "Failed to fetch schema information" 
         }),
         {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
