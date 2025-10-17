@@ -228,14 +228,18 @@ Responda APENAS com o JSON.`;
     let translatorSystemPrompt = userProfile?.system_instruction || 
       "Você é um assistente de desenvolvimento prestativo. Responda de forma clara e concisa.";
 
-    // If we have tool data, add it to the system prompt
+    // If we have tool data, add it to the system prompt with clear instructions
     if (toolUsed !== "none" && rawToolData) {
-      translatorSystemPrompt += `\n\n---\nDADOS DA FERRAMENTA (${toolUsed}):\n`;
+      translatorSystemPrompt += `\n\n---\n### DADOS DA FERRAMENTA (${toolUsed}):\n`;
       translatorSystemPrompt += JSON.stringify(rawToolData, null, 2);
-      translatorSystemPrompt += `\n---\n\nUse os dados brutos da ferramenta acima para formular uma resposta completa e amigável para o usuário.`;
+      translatorSystemPrompt += `\n---\n\n`;
       
-      if (!rawToolData.success) {
-        translatorSystemPrompt += `\n\nIMPORTANTE: A ferramenta retornou erro. Informe ao usuário que a integração não está configurada ou que você não tem acesso aos dados.`;
+      if (rawToolData.success) {
+        translatorSystemPrompt += `INSTRUÇÃO CRÍTICA: Use EXCLUSIVAMENTE os dados brutos acima para responder à pergunta do usuário. `;
+        translatorSystemPrompt += `Estes são os dados REAIS que foram buscados. Analise-os e forneça uma resposta detalhada baseada neles.`;
+      } else {
+        translatorSystemPrompt += `IMPORTANTE: A ferramenta retornou erro (${rawToolData.error}). `;
+        translatorSystemPrompt += `Informe ao usuário que a integração não está configurada ou que você não tem acesso aos dados solicitados.`;
       }
     }
 
