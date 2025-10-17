@@ -23,11 +23,18 @@ interface Project {
   github_repo_name: string | null;
 }
 
+interface ThoughtStep {
+  type: 'status' | 'tool_call' | 'tool_result' | 'formulating';
+  message: string;
+  success?: boolean;
+  error?: string;
+}
+
 interface ChatMessage {
   sender: 'user' | 'ai';
   message: string;
   isLoading?: boolean;
-  toolStatus?: string;
+  thoughtSteps?: ThoughtStep[];
 }
 
 const ProjectPage = () => {
@@ -191,15 +198,16 @@ const ProjectPage = () => {
         throw new Error("Failed to get response reader");
       }
 
-      // Create initial AI message with loading state
-      const aiMessageId = Date.now();
+      // Create initial AI message with thought steps
       setChatHistory(prev => [...prev, {
         sender: 'ai',
         message: '',
-        isLoading: true
+        isLoading: true,
+        thoughtSteps: []
       }]);
 
       let accumulatedText = "";
+      const thoughtSteps: ThoughtStep[] = [];
 
       while (true) {
         const { done, value } = await reader.read();
@@ -214,28 +222,33 @@ const ProjectPage = () => {
             try {
               const data = JSON.parse(line.slice(6));
               
-              // Handle tool status events
-              if (data.status === "tool") {
+              // Handle status events (thinking steps)
+              if (data.type === "status") {
+                thoughtSteps.push({
+                  type: 'status',
+                  message: data.message
+                });
+                
                 setChatHistory(prev => {
                   const newHistory = [...prev];
                   const lastMessage = newHistory[newHistory.length - 1];
                   if (lastMessage.sender === 'ai') {
-                    lastMessage.toolStatus = data.message;
+                    lastMessage.thoughtSteps = [...thoughtSteps];
                     lastMessage.isLoading = true;
                   }
                   return newHistory;
                 });
-              } else if (data.text) {
-                accumulatedText += data.text;
+              } 
+              // Handle LLM chunks (actual response text)
+              else if (data.type === "llm_chunk" && data.content) {
+                accumulatedText += data.content;
                 
-                // Update the AI message with accumulated text
                 setChatHistory(prev => {
                   const newHistory = [...prev];
                   const lastMessage = newHistory[newHistory.length - 1];
                   if (lastMessage.sender === 'ai') {
                     lastMessage.message = accumulatedText;
                     lastMessage.isLoading = false;
-                    lastMessage.toolStatus = undefined;
                   }
                   return newHistory;
                 });
@@ -363,7 +376,7 @@ const ProjectPage = () => {
                       sender={msg.sender}
                       message={msg.message}
                       isLoading={msg.isLoading}
-                      toolStatus={msg.toolStatus}
+                      thoughtSteps={msg.thoughtSteps}
                     />
                   ))}
                   {isProcessing && (

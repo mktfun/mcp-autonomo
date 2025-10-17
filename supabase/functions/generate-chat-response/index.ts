@@ -312,15 +312,39 @@ Responda APENAS com o JSON.`;
         let buffer = "";
         let accumulatedResponse = "";
         
-        // Send tool status event if a tool was used
+        // STEP 1: Send initial analysis status
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify({ type: "status", message: "⚙️ Analisando sua solicitação..." })}\n\n`)
+        );
+        
+        // STEP 2: Send router decision
         if (toolUsed !== "none") {
-          const toolStatusMessage = toolUsed === "list_github_files" 
-            ? "Acessando GitHub..." 
-            : "Consultando Supabase...";
+          const toolName = toolUsed === "list_github_files" ? "Acessar o GitHub" : "Consultar o Supabase";
           controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify({ status: "tool", tool: toolUsed, message: toolStatusMessage })}\n\n`)
+            encoder.encode(`data: ${JSON.stringify({ type: "status", message: `✅ Intenção identificada: ${toolName}` })}\n\n`)
           );
+          
+          // STEP 3: Send tool execution status
+          controller.enqueue(
+            encoder.encode(`data: ${JSON.stringify({ type: "status", message: `⏳ Executando a ferramenta \`${toolUsed}\`...` })}\n\n`)
+          );
+          
+          // STEP 4: Send tool result
+          if (rawToolData && !rawToolData.success) {
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify({ type: "status", message: `❌ Erro na ferramenta: ${rawToolData.error || "Falha desconhecida"}` })}\n\n`)
+            );
+          } else if (rawToolData && rawToolData.success) {
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify({ type: "status", message: "✅ Dados obtidos com sucesso." })}\n\n`)
+            );
+          }
         }
+        
+        // STEP 5: Send formulating response status
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify({ type: "status", message: "💭 Formulando resposta final..." })}\n\n`)
+        )
         
         try {
           while (true) {
@@ -362,9 +386,9 @@ Responda APENAS com o JSON.`;
                 
                 if (typeof chunk === "string" && chunk.length > 0) {
                   accumulatedResponse += chunk;
-                  // Convert to our format: data: {"text": "..."}
+                  // Send LLM chunk
                   controller.enqueue(
-                    encoder.encode(`data: ${JSON.stringify({ text: chunk })}\n\n`)
+                    encoder.encode(`data: ${JSON.stringify({ type: "llm_chunk", content: chunk })}\n\n`)
                   );
                 }
               } catch {
