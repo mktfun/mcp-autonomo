@@ -62,14 +62,28 @@ serve(async (req) => {
 
     const data = await response.json();
     const searchResult = data.choices[0].message.content;
+    
+    // Extract grounding metadata (sources) if available
+    const groundingMetadata = data.choices?.[0]?.message?.grounding_metadata;
+    const sources: string[] = [];
+    
+    if (groundingMetadata?.grounding_chunks) {
+      for (const chunk of groundingMetadata.grounding_chunks) {
+        if (chunk.web?.uri) {
+          sources.push(chunk.web.uri);
+        }
+      }
+    }
 
     console.log("Web search completed successfully");
+    console.log("Found sources:", sources.length);
 
     return new Response(
       JSON.stringify({
         success: true,
         result: searchResult,
-        query: query,
+        sources,
+        query,
       }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },

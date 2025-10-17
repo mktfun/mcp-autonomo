@@ -339,6 +339,7 @@ Seja conciso, profissional e analítico. Forneça contexto e significado, não a
       async start(controller) {
         let buffer = "";
         let accumulatedResponse = "";
+        let toolSources: string[] = [];
         
         // STEP 1: Send initial analysis status
         controller.enqueue(
@@ -406,6 +407,11 @@ Seja conciso, profissional e analítico. Forneça contexto e significado, não a
               encoder.encode(`data: ${JSON.stringify({ type: "status", message: `❌ Erro na ferramenta: ${rawToolData.error || "Falha desconhecida"}` })}\n\n`)
             );
           } else if (rawToolData && rawToolData.success) {
+            // Capture sources from web_search tool
+            if (toolUsed === "web_search" && rawToolData.sources) {
+              toolSources = rawToolData.sources;
+            }
+            
             // Provide detailed success feedback
             let successMessage = "✅ Dados obtidos com sucesso.";
             if (toolUsed === "get_supabase_schema" && rawToolData.totalTables) {
@@ -450,6 +456,13 @@ Seja conciso, profissional e analítico. Forneça contexto e significado, não a
 
               const jsonStr = line.slice(6).trim();
               if (jsonStr === "[DONE]") {
+                // Send sources if available
+                if (toolSources.length > 0) {
+                  controller.enqueue(
+                    encoder.encode(`data: ${JSON.stringify({ type: "sources", sources: toolSources })}\n\n`)
+                  );
+                }
+                
                 // PASSO 5: Salvar a resposta completa da IA no banco
                 if (accumulatedResponse.trim()) {
                   await supabaseAdmin

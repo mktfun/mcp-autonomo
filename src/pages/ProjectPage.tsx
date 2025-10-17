@@ -35,6 +35,8 @@ interface ChatMessage {
   message: string;
   isLoading?: boolean;
   thoughtSteps?: ThoughtStep[];
+  currentStatus?: string;
+  sources?: string[];
 }
 
 const ProjectPage = () => {
@@ -203,11 +205,14 @@ const ProjectPage = () => {
         sender: 'ai',
         message: '',
         isLoading: true,
-        thoughtSteps: []
+        thoughtSteps: [],
+        currentStatus: '',
+        sources: []
       }]);
 
       let accumulatedText = "";
       const thoughtSteps: ThoughtStep[] = [];
+      let sources: string[] = [];
 
       while (true) {
         const { done, value } = await reader.read();
@@ -234,6 +239,7 @@ const ProjectPage = () => {
                   const lastMessage = newHistory[newHistory.length - 1];
                   if (lastMessage.sender === 'ai') {
                     lastMessage.thoughtSteps = [...thoughtSteps];
+                    lastMessage.currentStatus = data.message;
                     lastMessage.isLoading = true;
                   }
                   return newHistory;
@@ -248,7 +254,21 @@ const ProjectPage = () => {
                   const lastMessage = newHistory[newHistory.length - 1];
                   if (lastMessage.sender === 'ai') {
                     lastMessage.message = accumulatedText;
+                    lastMessage.currentStatus = '';
                     lastMessage.isLoading = false;
+                  }
+                  return newHistory;
+                });
+              }
+              // Handle sources
+              else if (data.type === "sources" && data.sources) {
+                sources = data.sources;
+                
+                setChatHistory(prev => {
+                  const newHistory = [...prev];
+                  const lastMessage = newHistory[newHistory.length - 1];
+                  if (lastMessage.sender === 'ai') {
+                    lastMessage.sources = sources;
                   }
                   return newHistory;
                 });
@@ -377,6 +397,8 @@ const ProjectPage = () => {
                       message={msg.message}
                       isLoading={msg.isLoading}
                       thoughtSteps={msg.thoughtSteps}
+                      currentStatus={msg.currentStatus}
+                      sources={msg.sources}
                     />
                   ))}
                   {isProcessing && (
