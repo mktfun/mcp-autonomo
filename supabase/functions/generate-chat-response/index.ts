@@ -324,24 +324,69 @@ Responda APENAS com o JSON.`;
             encoder.encode(`data: ${JSON.stringify({ type: "status", message: `✅ Intenção identificada: ${toolName}` })}\n\n`)
           );
           
-          // STEP 3: Send tool execution status
+          // STEP 3: Indicate credentials lookup
+          if (toolUsed === "get_supabase_schema") {
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify({ type: "status", message: "🔑 Buscando credenciais do projeto no Vault..." })}\n\n`)
+            );
+            
+            // Check if we have project credentials
+            if (project?.supabase_project_url) {
+              controller.enqueue(
+                encoder.encode(`data: ${JSON.stringify({ type: "status", message: "✅ Credenciais obtidas." })}\n\n`)
+              );
+            } else {
+              controller.enqueue(
+                encoder.encode(`data: ${JSON.stringify({ type: "status", message: "⚠️ Projeto sem integração Supabase configurada." })}\n\n`)
+              );
+            }
+          } else if (toolUsed === "list_github_files") {
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify({ type: "status", message: "🔑 Buscando credenciais do GitHub..." })}\n\n`)
+            );
+            
+            if (project?.github_repo_owner && project?.github_repo_name) {
+              controller.enqueue(
+                encoder.encode(`data: ${JSON.stringify({ type: "status", message: "✅ Credenciais obtidas." })}\n\n`)
+              );
+            } else {
+              controller.enqueue(
+                encoder.encode(`data: ${JSON.stringify({ type: "status", message: "⚠️ Repositório GitHub não configurado." })}\n\n`)
+              );
+            }
+          }
+          
+          // STEP 4: Send tool execution status
           controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify({ type: "status", message: `⏳ Executando a ferramenta \`${toolUsed}\`...` })}\n\n`)
+            encoder.encode(`data: ${JSON.stringify({ type: "status", message: `⏳ Executando a ferramenta '${toolUsed}'...` })}\n\n`)
           );
           
-          // STEP 4: Send tool result
+          // STEP 5: Send tool result with details
           if (rawToolData && !rawToolData.success) {
             controller.enqueue(
               encoder.encode(`data: ${JSON.stringify({ type: "status", message: `❌ Erro na ferramenta: ${rawToolData.error || "Falha desconhecida"}` })}\n\n`)
             );
           } else if (rawToolData && rawToolData.success) {
+            // Provide detailed success feedback
+            let successMessage = "✅ Dados obtidos com sucesso.";
+            if (toolUsed === "get_supabase_schema" && rawToolData.totalTables) {
+              successMessage = `✅ Schema obtido: ${rawToolData.totalTables} tabela(s) encontrada(s).`;
+            } else if (toolUsed === "list_github_files" && rawToolData.files) {
+              successMessage = `✅ Repositório acessado: ${rawToolData.files.length} arquivo(s) encontrado(s).`;
+            }
+            
             controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify({ type: "status", message: "✅ Dados obtidos com sucesso." })}\n\n`)
+              encoder.encode(`data: ${JSON.stringify({ type: "status", message: successMessage })}\n\n`)
             );
           }
+        } else {
+          // No tool needed
+          controller.enqueue(
+            encoder.encode(`data: ${JSON.stringify({ type: "status", message: "✅ Nenhuma ferramenta externa necessária." })}\n\n`)
+          );
         }
         
-        // STEP 5: Send formulating response status
+        // STEP 6: Send formulating response status
         controller.enqueue(
           encoder.encode(`data: ${JSON.stringify({ type: "status", message: "💭 Formulando resposta final..." })}\n\n`)
         )
