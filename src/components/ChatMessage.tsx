@@ -1,4 +1,6 @@
 import { Card, CardContent } from "@/components/ui/card";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface ThoughtStep {
@@ -36,15 +38,27 @@ export const ChatMessage = ({ sender, message, isLoading, thoughtSteps }: ChatMe
             </div>
           )}
           <div className="flex-1 min-w-0 space-y-sm">
-            {/* Thought Steps (Process Log) */}
+            {/* Thought Steps (Process Log) - Accordion */}
             {thoughtSteps && thoughtSteps.length > 0 && (
-              <div className="space-y-xs border-l-2 border-primary/30 pl-sm">
-                {thoughtSteps.map((step, idx) => (
-                  <div key={idx} className="text-xs text-muted-foreground flex items-start gap-xs">
-                    <span className="leading-relaxed">{step.message}</span>
-                  </div>
-                ))}
-              </div>
+              <Accordion type="single" collapsible className="w-full">
+                <AccordionItem value="thought-steps" className="border-none">
+                  <AccordionTrigger className="text-xs text-muted-foreground hover:text-foreground py-2 hover:no-underline">
+                    <span className="flex items-center gap-xs">
+                      <ChevronDown className="h-3 w-3" />
+                      Ver processo de pensamento da IA...
+                    </span>
+                  </AccordionTrigger>
+                  <AccordionContent className="pb-2">
+                    <div className="space-y-xs border-l-2 border-primary/30 pl-sm mt-sm">
+                      {thoughtSteps.map((step, idx) => (
+                        <div key={idx} className="text-xs text-muted-foreground flex items-start gap-xs">
+                          <span className="leading-relaxed">{step.message}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
+              </Accordion>
             )}
             
             {/* Loading State */}
@@ -58,7 +72,7 @@ export const ChatMessage = ({ sender, message, isLoading, thoughtSteps }: ChatMe
                 <span>Processando...</span>
               </div>
             ) : message ? (
-              /* Final Response */
+              /* Final Response - Always Visible */
               <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">{message}</p>
             ) : null}
           </div>
