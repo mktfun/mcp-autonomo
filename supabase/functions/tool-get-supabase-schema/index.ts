@@ -67,12 +67,34 @@ serve(async (req) => {
       );
     }
 
-    // Decrypt Supabase API key
-    const { data: projectCreds, error: credsError } = await supabaseAdmin.rpc('decrypt_project_credentials', {
+    // Decrypt Supabase API key using authenticated context
+    const supabaseWithAuth = createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+      {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false,
+        },
+        global: {
+          headers: { Authorization: authHeader },
+        },
+      }
+    );
+
+    const { data: projectCreds, error: credsError } = await supabaseWithAuth.rpc('decrypt_project_credentials', {
       p_project_id: projectId
     });
 
+    console.log("Decrypt credentials result:", { 
+      hasError: !!credsError, 
+      hasCreds: !!projectCreds, 
+      credsLength: projectCreds?.length,
+      hasSupabaseKey: projectCreds?.[0]?.supabase_api_key ? 'yes' : 'no'
+    });
+
     if (credsError || !projectCreds || projectCreds.length === 0 || !projectCreds[0].supabase_api_key) {
+      console.error("Credentials error details:", credsError);
       return new Response(
         JSON.stringify({ 
           success: false, 
