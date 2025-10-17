@@ -134,6 +134,10 @@ export type Database = {
           supabase_api_key: string
         }[]
       }
+      get_schema_info: {
+        Args: Record<PropertyKey, never>
+        Returns: Json
+      }
       update_project_secrets_in_vault: {
         Args: {
           p_github_pat?: string
