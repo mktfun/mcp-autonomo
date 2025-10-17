@@ -115,14 +115,12 @@ serve(async (req) => {
       supabaseApiKey
     );
 
-    // Fetch schema information - get basic table list
-    const { data: tables, error: tablesError } = await projectSupabase
-      .from('information_schema.tables')
-      .select('table_name, table_schema')
-      .eq('table_schema', 'public');
+    // Fetch schema information via RPC
+    console.log("Calling get_schema_info RPC...");
+    const { data: schema, error: schemaError } = await projectSupabase.rpc('get_schema_info');
 
-    if (tablesError) {
-      console.error("Error fetching schema:", tablesError);
+    if (schemaError) {
+      console.error("Error fetching schema via RPC:", schemaError);
       return new Response(
         JSON.stringify({ 
           success: false, 
@@ -134,38 +132,7 @@ serve(async (req) => {
       );
     }
 
-    // Get detailed column information for each table
-    const schema: any[] = [];
-    
-    if (tables && Array.isArray(tables)) {
-      for (const table of tables.slice(0, 50)) { // Limit to 50 tables
-        const tableName = table.table_name;
-        
-        try {
-          const { data: columns, error: columnsError } = await projectSupabase
-            .from('information_schema.columns')
-            .select('column_name, data_type, is_nullable, column_default')
-            .eq('table_schema', 'public')
-            .eq('table_name', tableName);
-
-          if (!columnsError && columns) {
-            schema.push({
-              tableName,
-              columns: columns.map((col: any) => ({
-                name: col.column_name,
-                type: col.data_type,
-                nullable: col.is_nullable === 'YES',
-                default: col.column_default
-              }))
-            });
-          }
-        } catch (e) {
-          console.error(`Error fetching columns for ${tableName}:`, e);
-        }
-      }
-    }
-
-    console.log(`Found ${schema.length} tables with detailed schema`);
+    console.log(`Schema fetched successfully via RPC`);
 
     return new Response(
       JSON.stringify({ 
