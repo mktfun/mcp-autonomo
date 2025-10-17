@@ -109,7 +109,7 @@ serve(async (req) => {
     }
 
     // ========== CHAMADA 1: O ROTEADOR ==========
-    const routerSystemPrompt = `Você é um parser de JSON. Sua única função é analisar a mensagem e decidir se uma das ferramentas (list_github_files, get_supabase_schema) é necessária. Você DEVE responder APENAS com um JSON válido. Nenhum outro texto, saudação ou explicação é permitido. O formato é {"tool_to_use": "NOME_DA_FERRAMENTA"} ou {"tool_to_use": "none"}. Uma resposta fora deste formato é uma falha crítica.`;
+    const routerSystemPrompt = `Você é um parser de JSON. Sua única função é analisar a mensagem e decidir se uma das ferramentas (list_github_files, get_supabase_schema, web_search) é necessária. Você DEVE responder APENAS com um JSON válido. Nenhum outro texto, saudação ou explicação é permitido. O formato é {"tool_to_use": "NOME_DA_FERRAMENTA", "parameters": {"query": "TERMO_DA_BUSCA"}} ou {"tool_to_use": "none"}. Para ferramentas que não precisam de parâmetros (list_github_files, get_supabase_schema), omita o campo parameters. Uma resposta fora deste formato é uma falha crítica.`;
 
     const routerPrompt = `Analise esta mensagem do usuário e decida qual ferramenta usar:
 
@@ -118,6 +118,7 @@ MENSAGEM DO USUÁRIO: "${message}"
 FERRAMENTAS DISPONÍVEIS:
 - list_github_files: Use quando o usuário perguntar sobre arquivos, repositório, código, estrutura de pastas, ou o que há no GitHub
 - get_supabase_schema: Use quando o usuário perguntar sobre banco de dados, tabelas, schema, colunas, ou estrutura de dados
+- web_search: Use quando o usuário perguntar sobre eventos atuais, notícias, informações do mundo real, ou conhecimento geral que não esteja no código ou banco de dados (ex: "quem ganhou o campeonato", "últimas notícias sobre", "como está o clima")
 
 Responda APENAS com o JSON.`;
 
@@ -164,22 +165,29 @@ Responda APENAS com o JSON.`;
     let toolResult = null;
     let toolUsed = "none";
     let rawToolData = null;
+    let toolParameters = null;
     
     try {
       const routerDecision = JSON.parse(routerContent);
       toolUsed = routerDecision.tool_to_use;
+      toolParameters = routerDecision.parameters || null;
       
       console.log("========== STEP 2: TOOL EXECUTION ==========");
       console.log("Tool to use:", toolUsed);
+      console.log("Tool parameters:", toolParameters);
       
       if (toolUsed !== "none") {
         try {
           let toolUrl = "";
+          let toolBody: any = { projectId };
           
           if (toolUsed === "list_github_files") {
             toolUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/tool-list-github-files`;
           } else if (toolUsed === "get_supabase_schema") {
             toolUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/tool-get-supabase-schema`;
+          } else if (toolUsed === "web_search") {
+            toolUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/tool-web-search`;
+            toolBody = { query: toolParameters?.query || message };
           }
           
           if (toolUrl) {
@@ -189,7 +197,7 @@ Responda APENAS com o JSON.`;
                 Authorization: `Bearer ${token}`,
                 "Content-Type": "application/json",
               },
-              body: JSON.stringify({ projectId }),
+              body: JSON.stringify(toolBody),
             });
             
             rawToolData = await toolResp.json();
@@ -198,9 +206,10 @@ Responda APENAS com o JSON.`;
             if (rawToolData.success) {
               console.log("Tool result summary:", {
                 tool: toolUsed,
-                hasData: !!rawToolData.files || !!rawToolData.schema,
+                hasData: !!rawToolData.files || !!rawToolData.schema || !!rawToolData.result,
                 fileCount: rawToolData.files?.length,
-                tableCount: rawToolData.schema?.length
+                tableCount: rawToolData.schema?.length,
+                hasSearchResult: !!rawToolData.result
               });
             } else {
               console.error("Tool returned error:", rawToolData.error);
@@ -224,9 +233,18 @@ Responda APENAS com o JSON.`;
     // ========== CHAMADA 2: O TRADUTOR ==========
     console.log("========== STEP 3: TRANSLATOR CALL ==========");
     
-    // Build the translator system prompt
+    // Build the translator system prompt with enhanced analytical capabilities
     let translatorSystemPrompt = userProfile?.system_instruction || 
-      "Você é um assistente de desenvolvimento prestativo. Responda de forma clara e concisa.";
+      `Você é um Arquiteto de Software Sênior e especialista em análise de código. Sua função é analisar os dados brutos fornecidos pela ferramenta e entregar um insight de alto nível para o usuário. 
+
+NÃO liste apenas os dados. Em vez disso, ESTRUTURE, CATEGORIZE e EXPLIQUE o significado do que foi encontrado. 
+
+Por exemplo:
+- Se receber uma lista de arquivos, agrupe-os por funcionalidade (configuração, UI, backend, integração, etc.) e descreva o propósito geral do projeto e sua arquitetura.
+- Se receber um schema de banco de dados, explique as relações entre as tabelas, identifique padrões de design (como tabelas de junction, foreign keys), e descreva o modelo de dados de forma conceitual.
+- Se receber resultados de busca web, sintetize as informações encontradas de forma clara e objetiva.
+
+Seja conciso, profissional e analítico. Forneça contexto e significado, não apenas dados.`;
 
     // If we have tool data, add it to the system prompt with clear instructions
     if (toolUsed !== "none" && rawToolData) {
@@ -235,8 +253,14 @@ Responda APENAS com o JSON.`;
       translatorSystemPrompt += `\n---\n\n`;
       
       if (rawToolData.success) {
-        translatorSystemPrompt += `INSTRUÇÃO CRÍTICA: Use EXCLUSIVAMENTE os dados brutos acima para responder à pergunta do usuário. `;
-        translatorSystemPrompt += `Estes são os dados REAIS que foram buscados. Analise-os e forneça uma resposta detalhada baseada neles.`;
+        if (toolUsed === "web_search") {
+          translatorSystemPrompt += `INSTRUÇÃO: Os dados acima contêm informações obtidas de uma busca na web em tempo real. `;
+          translatorSystemPrompt += `Use essas informações para responder à pergunta do usuário de forma precisa e bem fundamentada.`;
+        } else {
+          translatorSystemPrompt += `INSTRUÇÃO CRÍTICA: Use EXCLUSIVAMENTE os dados brutos acima para responder à pergunta do usuário. `;
+          translatorSystemPrompt += `Estes são os dados REAIS que foram buscados do ${toolUsed === "list_github_files" ? "repositório GitHub" : "banco de dados Supabase"}. `;
+          translatorSystemPrompt += `Analise-os profundamente, estruture por categoria/função, e forneça uma resposta analítica e bem organizada.`;
+        }
       } else {
         translatorSystemPrompt += `IMPORTANTE: A ferramenta retornou erro (${rawToolData.error}). `;
         translatorSystemPrompt += `Informe ao usuário que a integração não está configurada ou que você não tem acesso aos dados solicitados.`;
@@ -323,7 +347,14 @@ Responda APENAS com o JSON.`;
         
         // STEP 2: Send router decision
         if (toolUsed !== "none") {
-          const toolName = toolUsed === "list_github_files" ? "Acessar o GitHub" : "Consultar o Supabase";
+          let toolName = "Executar ferramenta";
+          if (toolUsed === "list_github_files") {
+            toolName = "Acessar o GitHub";
+          } else if (toolUsed === "get_supabase_schema") {
+            toolName = "Consultar o Supabase";
+          } else if (toolUsed === "web_search") {
+            toolName = "Buscar na Web";
+          }
           controller.enqueue(
             encoder.encode(`data: ${JSON.stringify({ type: "status", message: `✅ Intenção identificada: ${toolName}` })}\n\n`)
           );
@@ -358,6 +389,10 @@ Responda APENAS com o JSON.`;
                 encoder.encode(`data: ${JSON.stringify({ type: "status", message: "⚠️ Repositório GitHub não configurado." })}\n\n`)
               );
             }
+          } else if (toolUsed === "web_search") {
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify({ type: "status", message: "🌐 Buscando na web..." })}\n\n`)
+            );
           }
           
           // STEP 4: Send tool execution status
@@ -377,6 +412,8 @@ Responda APENAS com o JSON.`;
               successMessage = `✅ Schema obtido: ${rawToolData.totalTables} tabela(s) encontrada(s).`;
             } else if (toolUsed === "list_github_files" && rawToolData.files) {
               successMessage = `✅ Repositório acessado: ${rawToolData.files.length} arquivo(s) encontrado(s).`;
+            } else if (toolUsed === "web_search" && rawToolData.result) {
+              successMessage = `✅ Busca na web concluída.`;
             }
             
             controller.enqueue(

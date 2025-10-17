@@ -9,6 +9,9 @@ verify_jwt = false
 [functions.tool-get-supabase-schema]
 verify_jwt = false
 
+[functions.tool-web-search]
+verify_jwt = false
+
 [functions.update-project-secrets]
 verify_jwt = false
 
