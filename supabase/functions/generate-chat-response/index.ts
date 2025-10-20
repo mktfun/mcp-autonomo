@@ -109,20 +109,26 @@ serve(async (req) => {
     }
 
     // ========== CHAMADA 1: O ROTEADOR ==========
-    const routerSystemPrompt = `Você é um parser de JSON. Sua única função é analisar a mensagem e decidir se uma das ferramentas é necessária. Você DEVE responder APENAS com um JSON válido. Nenhum outro texto, saudação ou explicação é permitido. O formato é {"tool_to_use": "NOME_DA_FERRAMENTA", "parameters": {...}} ou {"tool_to_use": "none"}. Para ferramentas que não precisam de parâmetros (list_github_files, get_supabase_schema), omita o campo parameters. Uma resposta fora deste formato é uma falha crítica.`;
+    const routerSystemPrompt = `Você é um roteador de tarefas robótico. Sua única função é analisar a mensagem do usuário em busca de palavras-chave e intenções, e responder APENAS com um JSON válido. Não converse. Não peça desculpas. Apenas JSON.
 
-    const routerPrompt = `Analise esta mensagem do usuário e decida qual ferramenta usar:
+As ferramentas disponíveis são:
+- get_supabase_schema: Usar para perguntas de LEITURA sobre o banco de dados (ex: "liste", "mostre", "descreva", "quais tabelas", "visualizar schema").
+- list_github_files: Usar para perguntas de LEITURA sobre o repositório (ex: "liste", "mostre", "quais arquivos", "estrutura do projeto").
+- propose_sql_execution: Usar para comandos de AÇÃO no banco de dados (ex: "delete", "apague", "remova", "crie", "insira", "insert", "update", "altere", "modifique", "adicione").
+- propose_github_edit: Usar para comandos de AÇÃO no repositório (ex: "crie um arquivo", "edite o arquivo", "delete este componente", "modifique o código").
+- web_search: Usar para perguntas sobre conhecimento geral ou eventos atuais (ex: "quem ganhou", "notícias", "clima").
+- none: Usar para conversas genéricas (ex: "oi", "tudo bem?", "obrigado").
+
+Analise a mensagem do usuário e retorne o JSON correspondente.
+Exemplo para AÇÃO SQL: {"tool_to_use": "propose_sql_execution", "parameters": {"user_request": "delete todos os registros da tabela clients"}}
+Exemplo para LEITURA: {"tool_to_use": "get_supabase_schema"}
+Exemplo para CONVERSA: {"tool_to_use": "none"}`;
+
+    const routerPrompt = `Analise a seguinte mensagem do usuário e classifique a intenção:
 
 MENSAGEM DO USUÁRIO: "${message}"
 
-FERRAMENTAS DISPONÍVEIS:
-- list_github_files: Use quando o usuário perguntar sobre arquivos, repositório, código, estrutura de pastas, ou o que há no GitHub
-- get_supabase_schema: Use quando o usuário perguntar sobre banco de dados, tabelas, schema, colunas, ou estrutura de dados
-- web_search: Use quando o usuário perguntar sobre eventos atuais, notícias, informações do mundo real, ou conhecimento geral que não esteja no código ou banco de dados
-- propose_sql_execution: Use quando o usuário pedir para EXECUTAR, RODAR, CRIAR, DELETAR, ATUALIZAR algo no banco de dados (ex: "delete todos os usuários", "crie uma tabela X", "atualize os registros"). Retorne {"tool_to_use": "propose_sql_execution", "parameters": {"sql_code": "O CÓDIGO SQL EXATO"}}
-- propose_github_edit: Use quando o usuário pedir para EDITAR, MODIFICAR, CRIAR arquivos no GitHub (ex: "edite o arquivo X", "crie um componente Y"). Retorne {"tool_to_use": "propose_github_edit", "parameters": {"file_path": "caminho/do/arquivo", "changes_description": "descrição das mudanças"}}
-
-Responda APENAS com o JSON.`;
+Retorne APENAS o JSON de roteamento, sem nenhum outro texto.`;
 
     console.log("========== STEP 1: ROUTER CALL ==========");
     console.log("User message:", message);
@@ -180,8 +186,81 @@ Responda APENAS com o JSON.`;
       
       if (toolUsed !== "none") {
         // Check if it's a proposal tool
-        if (toolUsed === "propose_sql_execution" || toolUsed === "propose_github_edit") {
-          // Don't execute, just create the action record
+        if (toolUsed === "propose_sql_execution") {
+          // For SQL proposals, we need to generate the SQL code
+          // First, check if router already provided SQL
+          let sqlCode = toolParameters?.sql_code;
+          
+          if (!sqlCode && toolParameters?.user_request) {
+            // Router didn't provide SQL, need to generate it
+            // Make a quick call to AI to generate the SQL from the user request
+            console.log("Generating SQL from user request:", toolParameters.user_request);
+            
+            const sqlGenPrompt = `Gere APENAS o código SQL para executar esta ação: "${toolParameters.user_request}". Responda APENAS com o código SQL, sem explicações, sem markdown, sem blocos de código. Apenas o SQL puro.`;
+            
+            try {
+              const sqlGenResp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${LOVABLE_API_KEY}`,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  model: "google/gemini-2.5-flash",
+                  messages: [
+                    { role: "system", content: "Você é um gerador de SQL. Responda APENAS com código SQL puro, sem explicações." },
+                    { role: "user", content: sqlGenPrompt }
+                  ],
+                  temperature: 0.1,
+                }),
+              });
+              
+              if (sqlGenResp.ok) {
+                const sqlGenData = await sqlGenResp.json();
+                sqlCode = sqlGenData.choices[0].message.content.trim();
+                console.log("Generated SQL:", sqlCode);
+              }
+            } catch (e) {
+              console.error("Error generating SQL:", e);
+            }
+          }
+          
+          if (!sqlCode) {
+            sqlCode = toolParameters?.user_request || "-- SQL não pôde ser gerado automaticamente";
+          }
+          
+          // Create the action with the SQL code
+          try {
+            const { data: actionData, error: actionError } = await supabaseAdmin
+              .from("agent_actions")
+              .insert({
+                project_id: projectId,
+                action_type: toolUsed,
+                payload: { sql_code: sqlCode, user_request: toolParameters?.user_request || message },
+                status: "pending"
+              })
+              .select()
+              .single();
+            
+            if (actionError) {
+              console.error("Error creating action:", actionError);
+              rawToolData = { success: false, error: "Falha ao criar ação pendente" };
+            } else {
+              console.log("Action created:", actionData.id);
+              rawToolData = { 
+                success: true, 
+                action_id: actionData.id,
+                action_type: toolUsed,
+                payload: { sql_code: sqlCode },
+                isPendingAction: true
+              };
+            }
+          } catch (e) {
+            console.error("Error creating action:", e);
+            rawToolData = { success: false, error: e instanceof Error ? e.message : String(e) };
+          }
+        } else if (toolUsed === "propose_github_edit") {
+          // For GitHub proposals, create action with the parameters
           try {
             const { data: actionData, error: actionError } = await supabaseAdmin
               .from("agent_actions")
@@ -293,12 +372,12 @@ Seja conciso, profissional e analítico. Forneça contexto e significado, não a
         if (rawToolData.isPendingAction) {
           // It's a pending action that needs confirmation
           translatorSystemPrompt += `INSTRUÇÃO CRÍTICA PARA AÇÃO PENDENTE:\n`;
-          translatorSystemPrompt += `1. Explique ao usuário EXATAMENTE o que a ação irá fazer.\n`;
-          translatorSystemPrompt += `2. Mostre o código/comando que será executado em um bloco de código formatado.\n`;
-          translatorSystemPrompt += `3. ALERTE sobre os riscos (se houver), especialmente se for uma ação destrutiva (DELETE, DROP, etc.).\n`;
-          translatorSystemPrompt += `4. Informe que a ação foi registrada e está aguardando confirmação.\n`;
-          translatorSystemPrompt += `5. A ação ID é: ${rawToolData.action_id}\n`;
-          translatorSystemPrompt += `6. NÃO execute nada. Apenas explique e peça confirmação.\n`;
+          translatorSystemPrompt += `1. O código SQL gerado foi: ${JSON.stringify(rawToolData.payload?.sql_code)}\n`;
+          translatorSystemPrompt += `2. Explique ao usuário EXATAMENTE o que este código SQL faz.\n`;
+          translatorSystemPrompt += `3. Mostre o código SQL em um bloco de código markdown formatado.\n`;
+          translatorSystemPrompt += `4. ALERTE sobre os riscos, especialmente se for uma ação destrutiva (DELETE, DROP, TRUNCATE).\n`;
+          translatorSystemPrompt += `5. Seja claro que a ação está aguardando confirmação e explique que haverá um botão para executar.\n`;
+          translatorSystemPrompt += `6. NÃO execute nada agora. Apenas explique e oriente o usuário.\n`;
         } else if (toolUsed === "web_search") {
           translatorSystemPrompt += `INSTRUÇÃO: Os dados acima contêm informações obtidas de uma busca na web em tempo real. `;
           translatorSystemPrompt += `Use essas informações para responder à pergunta do usuário de forma precisa e bem fundamentada.`;
