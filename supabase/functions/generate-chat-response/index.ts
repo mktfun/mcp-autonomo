@@ -374,7 +374,8 @@ Seja conciso, profissional e analítico. Forneça contexto e significado, não a
           translatorSystemPrompt += `INSTRUÇÃO CRÍTICA PARA AÇÃO PENDENTE:\n`;
           translatorSystemPrompt += `1. O código SQL gerado foi: ${JSON.stringify(rawToolData.payload?.sql_code)}\n`;
           translatorSystemPrompt += `2. Explique ao usuário EXATAMENTE o que este código SQL faz.\n`;
-          translatorSystemPrompt += `3. Mostre o código SQL em um bloco de código markdown formatado.\n`;
+          translatorSystemPrompt += `3. IMPORTANTE: Mostre o código SQL em um bloco de código Markdown formatado com a tag 'sql'. Exemplo:\n`;
+          translatorSystemPrompt += `\`\`\`sql\nDELETE FROM\n  public.agent_actions;\n\`\`\`\n`;
           translatorSystemPrompt += `4. ALERTE sobre os riscos, especialmente se for uma ação destrutiva (DELETE, DROP, TRUNCATE).\n`;
           translatorSystemPrompt += `5. Seja claro que a ação está aguardando confirmação e explique que haverá um botão para executar.\n`;
           translatorSystemPrompt += `6. NÃO execute nada agora. Apenas explique e oriente o usuário.\n`;

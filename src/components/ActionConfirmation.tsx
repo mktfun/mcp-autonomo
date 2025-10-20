@@ -1,9 +1,11 @@
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Zap, AlertTriangle, Loader2 } from "lucide-react";
+import { Zap, AlertTriangle, Loader2, Copy, Check } from "lucide-react";
 import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
 interface ActionConfirmationProps {
   actionId: string;
@@ -19,6 +21,7 @@ export const ActionConfirmation = ({
   onExecuted,
 }: ActionConfirmationProps) => {
   const [isExecuting, setIsExecuting] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const handleConfirm = async () => {
     setIsExecuting(true);
@@ -40,6 +43,18 @@ export const ActionConfirmation = ({
       toast.error(error.message || "Erro ao executar ação");
     } finally {
       setIsExecuting(false);
+    }
+  };
+
+  const handleCopy = async () => {
+    const code = getCodeBlock();
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      toast.success("Código copiado!");
+      setTimeout(() => setCopied(false), 2000);
+    } catch (error) {
+      toast.error("Erro ao copiar código");
     }
   };
 
@@ -74,10 +89,46 @@ export const ActionConfirmation = ({
         )}
         
         <div className="space-y-2">
-          <p className="text-sm font-medium">Código que será executado:</p>
-          <pre className="bg-muted p-3 rounded-lg overflow-x-auto text-xs font-mono">
-            <code>{getCodeBlock()}</code>
-          </pre>
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-medium">Código que será executado:</p>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleCopy}
+              className="h-7 px-2"
+            >
+              {copied ? (
+                <>
+                  <Check className="h-3 w-3 mr-1" />
+                  Copiado
+                </>
+              ) : (
+                <>
+                  <Copy className="h-3 w-3 mr-1" />
+                  Copiar
+                </>
+              )}
+            </Button>
+          </div>
+          
+          {actionType === "propose_sql_execution" ? (
+            <SyntaxHighlighter
+              language="sql"
+              style={vscDarkPlus}
+              customStyle={{
+                margin: 0,
+                borderRadius: '0.5rem',
+                fontSize: '0.75rem',
+                maxHeight: '300px',
+              }}
+            >
+              {getCodeBlock()}
+            </SyntaxHighlighter>
+          ) : (
+            <pre className="bg-muted p-3 rounded-lg overflow-x-auto text-xs font-mono max-h-[300px]">
+              <code>{getCodeBlock()}</code>
+            </pre>
+          )}
         </div>
 
         <div className="flex gap-2">

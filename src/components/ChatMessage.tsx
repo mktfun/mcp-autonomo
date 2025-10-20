@@ -6,6 +6,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ActionConfirmation } from "./ActionConfirmation";
 import { useState } from "react";
+import { format } from "date-fns";
 
 interface ThoughtStep {
   type: 'status' | 'tool_call' | 'tool_result' | 'formulating';
@@ -21,6 +22,7 @@ interface ChatMessageProps {
   thoughtSteps?: ThoughtStep[];
   currentStatus?: string;
   sources?: string[];
+  createdAt?: string;
   pendingAction?: {
     actionId: string;
     actionType: string;
@@ -28,9 +30,18 @@ interface ChatMessageProps {
   };
 }
 
-export const ChatMessage = ({ sender, message, isLoading, thoughtSteps, currentStatus, sources, pendingAction }: ChatMessageProps) => {
+export const ChatMessage = ({ sender, message, isLoading, thoughtSteps, currentStatus, sources, createdAt, pendingAction }: ChatMessageProps) => {
   const isUser = sender === 'user';
   const [actionExecuted, setActionExecuted] = useState(false);
+  
+  const formatTimestamp = (timestamp?: string) => {
+    if (!timestamp) return format(new Date(), 'HH:mm');
+    try {
+      return format(new Date(timestamp), 'HH:mm');
+    } catch {
+      return format(new Date(), 'HH:mm');
+    }
+  };
   
   return (
     <div className={cn(
@@ -149,6 +160,16 @@ export const ChatMessage = ({ sender, message, isLoading, thoughtSteps, currentS
                 <p className="text-xs text-success font-medium">✅ Ação executada com sucesso</p>
               </div>
             )}
+            
+            {/* Timestamp */}
+            <div className="flex justify-end mt-xs">
+              <span className={cn(
+                "text-[10px]",
+                isUser ? "text-[#121212]/40" : "text-muted-foreground/40"
+              )}>
+                {formatTimestamp(createdAt)}
+              </span>
+            </div>
           </div>
           {isUser && (
             <div className="w-7 h-7 rounded-full bg-[#121212]/20 flex items-center justify-center flex-shrink-0">

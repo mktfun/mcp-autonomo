@@ -37,6 +37,7 @@ interface ChatMessage {
   thoughtSteps?: ThoughtStep[];
   currentStatus?: string;
   sources?: string[];
+  createdAt?: string;
   pendingAction?: {
     actionId: string;
     actionType: string;
@@ -154,7 +155,8 @@ const ProjectPage = () => {
     if (data) {
       const formattedHistory: ChatMessage[] = data.map((msg: any) => ({
         sender: msg.role as 'user' | 'ai',
-        message: msg.content
+        message: msg.content,
+        createdAt: msg.created_at
       }));
       setChatHistory(formattedHistory);
     }
@@ -212,7 +214,8 @@ const ProjectPage = () => {
         isLoading: true,
         thoughtSteps: [],
         currentStatus: '',
-        sources: []
+        sources: [],
+        createdAt: new Date().toISOString()
       }]);
 
       let accumulatedText = "";
@@ -419,6 +422,7 @@ const ProjectPage = () => {
                       thoughtSteps={msg.thoughtSteps}
                       currentStatus={msg.currentStatus}
                       sources={msg.sources}
+                      createdAt={msg.createdAt}
                       pendingAction={msg.pendingAction}
                     />
                   ))}
