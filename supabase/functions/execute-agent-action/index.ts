@@ -122,14 +122,24 @@ serve(async (req) => {
 
       try {
         // Get GitHub credentials
-        const { data: credentials } = await supabaseAdmin.rpc(
+        console.log("🔐 Buscando credenciais do GitHub para projeto:", action.project_id);
+        const { data: credentials, error: credError } = await supabaseAdmin.rpc(
           "decrypt_project_credentials",
           { p_project_id: action.project_id }
         );
 
+        console.log("Resposta da RPC decrypt_project_credentials:", JSON.stringify(credentials));
+        if (credError) {
+          console.error("Erro ao buscar credenciais:", credError);
+          throw new Error(`Erro ao buscar credenciais: ${credError.message}`);
+        }
+
         if (!credentials || !credentials[0]?.github_pat) {
+          console.error("Credenciais não encontradas ou github_pat ausente. Dados:", credentials);
           throw new Error("GitHub credentials not found");
         }
+
+        console.log("✅ Credenciais do GitHub recuperadas com sucesso");
 
         // Get project GitHub info
         const { data: project } = await supabaseAdmin
@@ -148,8 +158,13 @@ serve(async (req) => {
 
         console.log(`Editing file: ${owner}/${repo}/${file_path}`);
 
-        // STEP 1: Read current file content
+        // ========================================
+        // ATO 1: Lendo arquivo do GitHub...
+        // ========================================
+        console.log("🔵 ATO 1: Lendo arquivo do GitHub...");
         const getFileUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${file_path}`;
+        console.log("GET URL:", getFileUrl);
+        
         const getFileResponse = await fetch(getFileUrl, {
           method: "GET",
           headers: {
@@ -159,8 +174,11 @@ serve(async (req) => {
           },
         });
 
+        console.log("GitHub GET response status:", getFileResponse.status);
+        
         if (!getFileResponse.ok) {
           const errorText = await getFileResponse.text();
+          console.error("❌ Erro ao ler arquivo do GitHub:", errorText);
           throw new Error(`Failed to read file from GitHub: ${errorText}`);
         }
 
@@ -168,9 +186,15 @@ serve(async (req) => {
         const currentContent = atob(fileData.content); // Decode base64
         const fileSha = fileData.sha;
 
-        console.log("Current file content length:", currentContent.length);
+        console.log("✅ Arquivo lido com sucesso!");
+        console.log("  - SHA do arquivo:", fileSha);
+        console.log("  - Tamanho do conteúdo:", currentContent.length, "caracteres");
+        console.log("  - Primeiros 100 caracteres:", currentContent.substring(0, 100));
 
-        // STEP 2: Generate new content using AI
+        // ========================================
+        // ATO 2: Gerando novo conteúdo com a IA...
+        // ========================================
+        console.log("🟡 ATO 2: Gerando novo conteúdo com a IA...");
         const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
         if (!LOVABLE_API_KEY) {
           throw new Error("LOVABLE_API_KEY not configured");
@@ -178,6 +202,7 @@ serve(async (req) => {
 
         const editPrompt = `Aqui está o conteúdo atual do arquivo '${file_path}':\n\n\`\`\`\n${currentContent}\n\`\`\`\n\nAplique a seguinte mudança: '${changes_description}'.\n\nRetorne APENAS o conteúdo completo do arquivo modificado, sem nenhuma outra explicação, sem blocos de código markdown, apenas o conteúdo puro do arquivo.`;
 
+        console.log("Chamando Lovable AI Gateway...");
         const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
           method: "POST",
           headers: {
@@ -197,8 +222,12 @@ serve(async (req) => {
           }),
         });
 
+        console.log("AI response status:", aiResponse.status);
+        
         if (!aiResponse.ok) {
-          throw new Error("Failed to generate new file content with AI");
+          const aiErrorText = await aiResponse.text();
+          console.error("❌ Erro na resposta da IA:", aiErrorText);
+          throw new Error(`Failed to generate new file content with AI: ${aiErrorText}`);
         }
 
         const aiData = await aiResponse.json();
@@ -207,10 +236,26 @@ serve(async (req) => {
         // Remove markdown code blocks if AI added them despite instructions
         newContent = newContent.replace(/^```[\w]*\n/g, '').replace(/\n```$/g, '');
 
-        console.log("New file content length:", newContent.length);
+        console.log("✅ Novo conteúdo gerado com sucesso!");
+        console.log("  - Tamanho do novo conteúdo:", newContent.length, "caracteres");
+        console.log("  - Primeiros 100 caracteres:", newContent.substring(0, 100));
 
-        // STEP 3: Write the modified file back to GitHub
+        // ========================================
+        // ATO 3: Enviando novo conteúdo para o GitHub...
+        // ========================================
+        console.log("🟢 ATO 3: Enviando novo conteúdo para o GitHub...");
         const updateFileUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${file_path}`;
+        console.log("PUT URL:", updateFileUrl);
+        console.log("Usando SHA:", fileSha);
+        
+        const commitPayload = {
+          message: `Automated edit by AI Agent: ${changes_description}`,
+          content: btoa(newContent), // Encode to base64
+          sha: fileSha,
+        };
+        
+        console.log("Payload para commit (conteúdo em base64, SHA incluído)");
+        
         const updateFileResponse = await fetch(updateFileUrl, {
           method: "PUT",
           headers: {
@@ -219,20 +264,22 @@ serve(async (req) => {
             "User-Agent": "Supabase-Edge-Function",
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({
-            message: `Automated edit by AI Agent: ${changes_description}`,
-            content: btoa(newContent), // Encode to base64
-            sha: fileSha,
-          }),
+          body: JSON.stringify(commitPayload),
         });
 
+        console.log("GitHub PUT response status:", updateFileResponse.status);
+        
         if (!updateFileResponse.ok) {
           const errorText = await updateFileResponse.text();
+          console.error("❌ ERRO COMPLETO DA API DO GITHUB:");
+          console.error(errorText);
           throw new Error(`Failed to commit file to GitHub: ${errorText}`);
         }
 
         const commitData = await updateFileResponse.json();
-        console.log("File committed successfully:", commitData.commit.sha);
+        console.log("✅ Arquivo commitado com sucesso!");
+        console.log("  - SHA do commit:", commitData.commit.sha);
+        console.log("  - URL do commit:", commitData.commit.html_url);
 
         executionResult = {
           success: true,
