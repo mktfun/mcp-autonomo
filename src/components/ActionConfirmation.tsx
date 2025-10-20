@@ -11,7 +11,7 @@ interface ActionConfirmationProps {
   actionId: string;
   actionType: string;
   payload: any;
-  onExecuted: () => void;
+  onExecuted: (success: boolean, errorMessage?: string) => void;
 }
 
 export const ActionConfirmation = ({
@@ -73,16 +73,14 @@ export const ActionConfirmation = ({
         const errorMessage = result?.error || 'Erro ao executar ação';
         toast.error(errorMessage);
         
-        // If error indicates action is not pending, hide button
-        if (String(errorMessage).toLowerCase().includes('not pending')) {
-          setActionExecuted(true);
-        }
+        // Notify parent of failure
+        onExecuted(false, errorMessage);
         return;
       }
 
       toast.success(result.message || 'Ação executada com sucesso!');
-      setActionExecuted(true);
-      onExecuted();
+      // Notify parent of success
+      onExecuted(true);
     } catch (error: any) {
       console.error("Error executing action:", error);
       toast.error(error.message || "Erro ao executar ação");

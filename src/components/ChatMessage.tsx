@@ -1,12 +1,13 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
-import { ChevronDown, ExternalLink } from "lucide-react";
+import { ChevronDown, ExternalLink, CheckCircle, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ActionConfirmation } from "./ActionConfirmation";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { format } from "date-fns";
+import { supabase } from "@/lib/supabase";
 
 interface ThoughtStep {
   type: 'status' | 'tool_call' | 'tool_result' | 'formulating';
@@ -32,7 +33,39 @@ interface ChatMessageProps {
 
 export const ChatMessage = ({ sender, message, isLoading, thoughtSteps, currentStatus, sources, createdAt, pendingAction }: ChatMessageProps) => {
   const isUser = sender === 'user';
-  const [actionExecuted, setActionExecuted] = useState(false);
+  const [actionStatus, setActionStatus] = useState<'pending' | 'success' | 'failed' | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  // Check action status on mount if pendingAction exists
+  useEffect(() => {
+    const checkActionStatus = async () => {
+      if (!pendingAction) return;
+
+      const { data, error } = await supabase
+        .from('agent_actions')
+        .select('status')
+        .eq('id', pendingAction.actionId)
+        .maybeSingle();
+
+      if (error) {
+        console.error("Error fetching action status:", error);
+        return;
+      }
+
+      if (data) {
+        if (data.status === 'pending') {
+          setActionStatus('pending');
+        } else if (data.status === 'executed') {
+          setActionStatus('success');
+        } else if (data.status === 'failed') {
+          setActionStatus('failed');
+          setActionError('A execução falhou. Verifique os logs para mais detalhes.');
+        }
+      }
+    };
+
+    checkActionStatus();
+  }, [pendingAction]);
   
   const formatTimestamp = (timestamp?: string) => {
     if (!timestamp) return format(new Date(), 'HH:mm');
@@ -144,21 +177,48 @@ export const ChatMessage = ({ sender, message, isLoading, thoughtSteps, currentS
               </div>
             )}
 
-            {/* Pending Action Confirmation */}
-            {pendingAction && !actionExecuted && (
-              <ActionConfirmation
-                actionId={pendingAction.actionId}
-                actionType={pendingAction.actionType}
-                payload={pendingAction.payload}
-                onExecuted={() => setActionExecuted(true)}
-              />
-            )}
+            {/* Action Status Display */}
+            {pendingAction && (
+              <>
+                {actionStatus === 'pending' && (
+                  <ActionConfirmation
+                    actionId={pendingAction.actionId}
+                    actionType={pendingAction.actionType}
+                    payload={pendingAction.payload}
+                    onExecuted={(success, errorMsg) => {
+                      if (success) {
+                        setActionStatus('success');
+                      } else {
+                        setActionStatus('failed');
+                        setActionError(errorMsg || 'Erro desconhecido');
+                      }
+                    }}
+                  />
+                )}
 
-            {/* Action Executed Status */}
-            {actionExecuted && (
-              <div className="mt-md p-sm bg-success/10 border border-success/20 rounded-lg">
-                <p className="text-xs text-success font-medium">✅ Ação executada com sucesso</p>
-              </div>
+                {actionStatus === 'success' && (
+                  <div className="mt-md p-md bg-success/10 border border-success/20 rounded-lg">
+                    <div className="flex items-center gap-sm">
+                      <CheckCircle className="h-5 w-5 text-success flex-shrink-0" />
+                      <p className="text-sm text-success font-medium">✅ Ação executada com sucesso!</p>
+                    </div>
+                  </div>
+                )}
+
+                {actionStatus === 'failed' && (
+                  <div className="mt-md p-md bg-destructive/10 border border-destructive/20 rounded-lg">
+                    <div className="flex items-start gap-sm">
+                      <XCircle className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-sm text-destructive font-medium">❌ Falha na execução</p>
+                        {actionError && (
+                          <p className="text-xs text-destructive/80 mt-1">{actionError}</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </>
             )}
             
             {/* Timestamp */}
