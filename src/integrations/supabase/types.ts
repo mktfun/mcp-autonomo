@@ -14,6 +14,54 @@ export type Database = {
   }
   public: {
     Tables: {
+      agent_actions: {
+        Row: {
+          action_type: string
+          chat_message_id: number | null
+          created_at: string
+          executed_at: string | null
+          id: string
+          payload: Json
+          project_id: string
+          status: string
+        }
+        Insert: {
+          action_type: string
+          chat_message_id?: number | null
+          created_at?: string
+          executed_at?: string | null
+          id?: string
+          payload: Json
+          project_id: string
+          status?: string
+        }
+        Update: {
+          action_type?: string
+          chat_message_id?: number | null
+          created_at?: string
+          executed_at?: string | null
+          id?: string
+          payload?: Json
+          project_id?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_actions_chat_message_id_fkey"
+            columns: ["chat_message_id"]
+            isOneToOne: false
+            referencedRelation: "chat_messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_actions_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       chat_messages: {
         Row: {
           content: string

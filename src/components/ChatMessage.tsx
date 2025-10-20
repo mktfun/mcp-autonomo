@@ -4,6 +4,8 @@ import { ChevronDown, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { ActionConfirmation } from "./ActionConfirmation";
+import { useState } from "react";
 
 interface ThoughtStep {
   type: 'status' | 'tool_call' | 'tool_result' | 'formulating';
@@ -19,10 +21,16 @@ interface ChatMessageProps {
   thoughtSteps?: ThoughtStep[];
   currentStatus?: string;
   sources?: string[];
+  pendingAction?: {
+    actionId: string;
+    actionType: string;
+    payload: any;
+  };
 }
 
-export const ChatMessage = ({ sender, message, isLoading, thoughtSteps, currentStatus, sources }: ChatMessageProps) => {
+export const ChatMessage = ({ sender, message, isLoading, thoughtSteps, currentStatus, sources, pendingAction }: ChatMessageProps) => {
   const isUser = sender === 'user';
+  const [actionExecuted, setActionExecuted] = useState(false);
   
   return (
     <div className={cn(
@@ -122,6 +130,23 @@ export const ChatMessage = ({ sender, message, isLoading, thoughtSteps, currentS
                     </a>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {/* Pending Action Confirmation */}
+            {pendingAction && !actionExecuted && (
+              <ActionConfirmation
+                actionId={pendingAction.actionId}
+                actionType={pendingAction.actionType}
+                payload={pendingAction.payload}
+                onExecuted={() => setActionExecuted(true)}
+              />
+            )}
+
+            {/* Action Executed Status */}
+            {actionExecuted && (
+              <div className="mt-md p-sm bg-success/10 border border-success/20 rounded-lg">
+                <p className="text-xs text-success font-medium">✅ Ação executada com sucesso</p>
               </div>
             )}
           </div>

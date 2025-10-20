@@ -17,3 +17,6 @@ verify_jwt = false
 
 [functions.update-user-settings]
 verify_jwt = false
+
+[functions.execute-agent-action]
+verify_jwt = true

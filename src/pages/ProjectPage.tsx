@@ -37,6 +37,11 @@ interface ChatMessage {
   thoughtSteps?: ThoughtStep[];
   currentStatus?: string;
   sources?: string[];
+  pendingAction?: {
+    actionId: string;
+    actionType: string;
+    payload: any;
+  };
 }
 
 const ProjectPage = () => {
@@ -273,6 +278,21 @@ const ProjectPage = () => {
                   return newHistory;
                 });
               }
+              // Handle pending actions
+              else if (data.type === "pending_action" && data.action_id) {
+                setChatHistory(prev => {
+                  const newHistory = [...prev];
+                  const lastMessage = newHistory[newHistory.length - 1];
+                  if (lastMessage.sender === 'ai') {
+                    lastMessage.pendingAction = {
+                      actionId: data.action_id,
+                      actionType: data.action_type,
+                      payload: data.payload
+                    };
+                  }
+                  return newHistory;
+                });
+              }
             } catch (e) {
               console.error("Error parsing SSE data:", e);
             }
@@ -399,6 +419,7 @@ const ProjectPage = () => {
                       thoughtSteps={msg.thoughtSteps}
                       currentStatus={msg.currentStatus}
                       sources={msg.sources}
+                      pendingAction={msg.pendingAction}
                     />
                   ))}
                   {isProcessing && (

@@ -109,7 +109,7 @@ serve(async (req) => {
     }
 
     // ========== CHAMADA 1: O ROTEADOR ==========
-    const routerSystemPrompt = `Você é um parser de JSON. Sua única função é analisar a mensagem e decidir se uma das ferramentas (list_github_files, get_supabase_schema, web_search) é necessária. Você DEVE responder APENAS com um JSON válido. Nenhum outro texto, saudação ou explicação é permitido. O formato é {"tool_to_use": "NOME_DA_FERRAMENTA", "parameters": {"query": "TERMO_DA_BUSCA"}} ou {"tool_to_use": "none"}. Para ferramentas que não precisam de parâmetros (list_github_files, get_supabase_schema), omita o campo parameters. Uma resposta fora deste formato é uma falha crítica.`;
+    const routerSystemPrompt = `Você é um parser de JSON. Sua única função é analisar a mensagem e decidir se uma das ferramentas é necessária. Você DEVE responder APENAS com um JSON válido. Nenhum outro texto, saudação ou explicação é permitido. O formato é {"tool_to_use": "NOME_DA_FERRAMENTA", "parameters": {...}} ou {"tool_to_use": "none"}. Para ferramentas que não precisam de parâmetros (list_github_files, get_supabase_schema), omita o campo parameters. Uma resposta fora deste formato é uma falha crítica.`;
 
     const routerPrompt = `Analise esta mensagem do usuário e decida qual ferramenta usar:
 
@@ -118,7 +118,9 @@ MENSAGEM DO USUÁRIO: "${message}"
 FERRAMENTAS DISPONÍVEIS:
 - list_github_files: Use quando o usuário perguntar sobre arquivos, repositório, código, estrutura de pastas, ou o que há no GitHub
 - get_supabase_schema: Use quando o usuário perguntar sobre banco de dados, tabelas, schema, colunas, ou estrutura de dados
-- web_search: Use quando o usuário perguntar sobre eventos atuais, notícias, informações do mundo real, ou conhecimento geral que não esteja no código ou banco de dados (ex: "quem ganhou o campeonato", "últimas notícias sobre", "como está o clima")
+- web_search: Use quando o usuário perguntar sobre eventos atuais, notícias, informações do mundo real, ou conhecimento geral que não esteja no código ou banco de dados
+- propose_sql_execution: Use quando o usuário pedir para EXECUTAR, RODAR, CRIAR, DELETAR, ATUALIZAR algo no banco de dados (ex: "delete todos os usuários", "crie uma tabela X", "atualize os registros"). Retorne {"tool_to_use": "propose_sql_execution", "parameters": {"sql_code": "O CÓDIGO SQL EXATO"}}
+- propose_github_edit: Use quando o usuário pedir para EDITAR, MODIFICAR, CRIAR arquivos no GitHub (ex: "edite o arquivo X", "crie um componente Y"). Retorne {"tool_to_use": "propose_github_edit", "parameters": {"file_path": "caminho/do/arquivo", "changes_description": "descrição das mudanças"}}
 
 Responda APENAS com o JSON.`;
 
@@ -177,48 +179,83 @@ Responda APENAS com o JSON.`;
       console.log("Tool parameters:", toolParameters);
       
       if (toolUsed !== "none") {
-        try {
-          let toolUrl = "";
-          let toolBody: any = { projectId };
-          
-          if (toolUsed === "list_github_files") {
-            toolUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/tool-list-github-files`;
-          } else if (toolUsed === "get_supabase_schema") {
-            toolUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/tool-get-supabase-schema`;
-          } else if (toolUsed === "web_search") {
-            toolUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/tool-web-search`;
-            toolBody = { query: toolParameters?.query || message };
-          }
-          
-          if (toolUrl) {
-            const toolResp = await fetch(toolUrl, {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${token}`,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify(toolBody),
-            });
+        // Check if it's a proposal tool
+        if (toolUsed === "propose_sql_execution" || toolUsed === "propose_github_edit") {
+          // Don't execute, just create the action record
+          try {
+            const { data: actionData, error: actionError } = await supabaseAdmin
+              .from("agent_actions")
+              .insert({
+                project_id: projectId,
+                action_type: toolUsed,
+                payload: toolParameters,
+                status: "pending"
+              })
+              .select()
+              .single();
             
-            rawToolData = await toolResp.json();
-            console.log(`Tool ${toolUsed} executed, success:`, rawToolData.success);
-            
-            if (rawToolData.success) {
-              console.log("Tool result summary:", {
-                tool: toolUsed,
-                hasData: !!rawToolData.files || !!rawToolData.schema || !!rawToolData.result,
-                fileCount: rawToolData.files?.length,
-                tableCount: rawToolData.schema?.length,
-                hasSearchResult: !!rawToolData.result
-              });
+            if (actionError) {
+              console.error("Error creating action:", actionError);
+              rawToolData = { success: false, error: "Falha ao criar ação pendente" };
             } else {
-              console.error("Tool returned error:", rawToolData.error);
+              console.log("Action created:", actionData.id);
+              rawToolData = { 
+                success: true, 
+                action_id: actionData.id,
+                action_type: toolUsed,
+                payload: toolParameters,
+                isPendingAction: true
+              };
             }
+          } catch (e) {
+            console.error("Error creating action:", e);
+            rawToolData = { success: false, error: e instanceof Error ? e.message : String(e) };
           }
-        } catch (e) {
-          console.error("Error executing tool:", e);
-          const errorMessage = e instanceof Error ? e.message : String(e);
-          rawToolData = { success: false, error: errorMessage };
+        } else {
+          // Execute information-gathering tools normally
+          try {
+            let toolUrl = "";
+            let toolBody: any = { projectId };
+            
+            if (toolUsed === "list_github_files") {
+              toolUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/tool-list-github-files`;
+            } else if (toolUsed === "get_supabase_schema") {
+              toolUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/tool-get-supabase-schema`;
+            } else if (toolUsed === "web_search") {
+              toolUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/tool-web-search`;
+              toolBody = { query: toolParameters?.query || message };
+            }
+            
+            if (toolUrl) {
+              const toolResp = await fetch(toolUrl, {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${token}`,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify(toolBody),
+              });
+              
+              rawToolData = await toolResp.json();
+              console.log(`Tool ${toolUsed} executed, success:`, rawToolData.success);
+              
+              if (rawToolData.success) {
+                console.log("Tool result summary:", {
+                  tool: toolUsed,
+                  hasData: !!rawToolData.files || !!rawToolData.schema || !!rawToolData.result,
+                  fileCount: rawToolData.files?.length,
+                  tableCount: rawToolData.schema?.length,
+                  hasSearchResult: !!rawToolData.result
+                });
+              } else {
+                console.error("Tool returned error:", rawToolData.error);
+              }
+            }
+          } catch (e) {
+            console.error("Error executing tool:", e);
+            const errorMessage = e instanceof Error ? e.message : String(e);
+            rawToolData = { success: false, error: errorMessage };
+          }
         }
       } else {
         console.log("No tool needed, proceeding without tool data");
@@ -253,7 +290,16 @@ Seja conciso, profissional e analítico. Forneça contexto e significado, não a
       translatorSystemPrompt += `\n---\n\n`;
       
       if (rawToolData.success) {
-        if (toolUsed === "web_search") {
+        if (rawToolData.isPendingAction) {
+          // It's a pending action that needs confirmation
+          translatorSystemPrompt += `INSTRUÇÃO CRÍTICA PARA AÇÃO PENDENTE:\n`;
+          translatorSystemPrompt += `1. Explique ao usuário EXATAMENTE o que a ação irá fazer.\n`;
+          translatorSystemPrompt += `2. Mostre o código/comando que será executado em um bloco de código formatado.\n`;
+          translatorSystemPrompt += `3. ALERTE sobre os riscos (se houver), especialmente se for uma ação destrutiva (DELETE, DROP, etc.).\n`;
+          translatorSystemPrompt += `4. Informe que a ação foi registrada e está aguardando confirmação.\n`;
+          translatorSystemPrompt += `5. A ação ID é: ${rawToolData.action_id}\n`;
+          translatorSystemPrompt += `6. NÃO execute nada. Apenas explique e peça confirmação.\n`;
+        } else if (toolUsed === "web_search") {
           translatorSystemPrompt += `INSTRUÇÃO: Os dados acima contêm informações obtidas de uma busca na web em tempo real. `;
           translatorSystemPrompt += `Use essas informações para responder à pergunta do usuário de forma precisa e bem fundamentada.`;
         } else {
@@ -340,6 +386,9 @@ Seja conciso, profissional e analítico. Forneça contexto e significado, não a
         let buffer = "";
         let accumulatedResponse = "";
         let toolSources: string[] = [];
+        let pendingActionId: string | null = null;
+        let pendingActionType: string | null = null;
+        let pendingActionPayload: any = null;
         
         // STEP 1: Send initial analysis status
         controller.enqueue(
@@ -412,9 +461,18 @@ Seja conciso, profissional e analítico. Forneça contexto e significado, não a
               toolSources = rawToolData.sources;
             }
             
+            // Capture pending action data
+            if (rawToolData.isPendingAction) {
+              pendingActionId = rawToolData.action_id;
+              pendingActionType = rawToolData.action_type;
+              pendingActionPayload = rawToolData.payload;
+            }
+            
             // Provide detailed success feedback
             let successMessage = "✅ Dados obtidos com sucesso.";
-            if (toolUsed === "get_supabase_schema" && rawToolData.totalTables) {
+            if (rawToolData.isPendingAction) {
+              successMessage = "✅ Ação proposta criada. Aguardando confirmação do usuário.";
+            } else if (toolUsed === "get_supabase_schema" && rawToolData.totalTables) {
               successMessage = `✅ Schema obtido: ${rawToolData.totalTables} tabela(s) encontrada(s).`;
             } else if (toolUsed === "list_github_files" && rawToolData.files) {
               successMessage = `✅ Repositório acessado: ${rawToolData.files.length} arquivo(s) encontrado(s).`;
@@ -460,6 +518,18 @@ Seja conciso, profissional e analítico. Forneça contexto e significado, não a
                 if (toolSources.length > 0) {
                   controller.enqueue(
                     encoder.encode(`data: ${JSON.stringify({ type: "sources", sources: toolSources })}\n\n`)
+                  );
+                }
+                
+                // Send pending action if available
+                if (pendingActionId) {
+                  controller.enqueue(
+                    encoder.encode(`data: ${JSON.stringify({ 
+                      type: "pending_action", 
+                      action_id: pendingActionId,
+                      action_type: pendingActionType,
+                      payload: pendingActionPayload
+                    })}\n\n`)
                   );
                 }
                 
