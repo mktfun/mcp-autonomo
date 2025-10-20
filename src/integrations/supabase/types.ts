@@ -182,6 +182,10 @@ export type Database = {
           supabase_api_key: string
         }[]
       }
+      exec_sql: {
+        Args: { sql: string }
+        Returns: Json
+      }
       get_schema_info: {
         Args: Record<PropertyKey, never>
         Returns: Json
