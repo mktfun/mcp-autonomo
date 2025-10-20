@@ -77,52 +77,43 @@ serve(async (req) => {
 
     // Execute based on action type
     if (action.action_type === "propose_sql_execution") {
-      // Execute SQL on the user's project database
+      // Execute SQL on the project database
       const sqlCode = action.payload.sql_code;
       
       if (!sqlCode) {
         throw new Error("No SQL code in payload");
       }
 
-      console.log("SQL to execute:", sqlCode);
+      console.log("Executing SQL:", sqlCode);
 
-      // For now, we'll return the SQL for manual execution
-      // In the future, this could execute directly on the user's Supabase project
-      // with proper validation and security measures
-      
-      executionResult = {
-        success: true,
-        result: {
-          message: "SQL gerado com sucesso. Por questões de segurança, execute manualmente em seu projeto Supabase.",
+      try {
+        // Execute directly on this Supabase project's database
+        // Parse and execute the SQL using the admin client
+        const { data, error } = await supabaseAdmin.rpc('exec_sql', {
           sql: sqlCode
-        },
-        message: `SQL pronto para execução:\n\n${sqlCode}\n\nPor favor, execute este código manualmente no SQL Editor do seu projeto Supabase para garantir segurança.`
-      };
-      
-      /* TODO: Implementar execução automática segura
-      // Get project credentials from vault
-      const { data: credentials } = await supabaseAdmin.rpc(
-        "decrypt_project_credentials",
-        { p_project_id: action.project_id }
-      );
+        });
 
-      if (!credentials || !credentials[0]?.supabase_api_key) {
-        throw new Error("Project Supabase credentials not found");
+        if (error) {
+          console.error("SQL execution error:", error);
+          executionResult = {
+            success: false,
+            error: error.message || "Falha ao executar SQL"
+          };
+        } else {
+          console.log("SQL executed successfully:", data);
+          executionResult = {
+            success: true,
+            result: data,
+            message: "SQL executado com sucesso!"
+          };
+        }
+      } catch (e) {
+        console.error("SQL execution exception:", e);
+        executionResult = {
+          success: false,
+          error: e instanceof Error ? e.message : String(e)
+        };
       }
-
-      // Get project URL
-      const { data: project } = await supabaseAdmin
-        .from("projects")
-        .select("supabase_project_url")
-        .eq("id", action.project_id)
-        .single();
-
-      if (!project?.supabase_project_url) {
-        throw new Error("Project Supabase URL not found");
-      }
-
-      // Execute SQL safely with proper validation
-      */
     } else if (action.action_type === "propose_github_edit") {
       // Execute GitHub edit
       const { file_path, changes_description } = action.payload;

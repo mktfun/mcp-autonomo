@@ -30,31 +30,14 @@ export const ActionConfirmation = ({
       if (error) throw error;
 
       if (data.success) {
-        if (data.message) {
-          // Show the detailed message (e.g., SQL ready for manual execution)
-          toast.success(data.message, {
-            duration: 10000,
-            description: data.result?.sql ? "SQL copiado para a área de transferência" : undefined,
-          });
-          
-          // Copy SQL to clipboard if available
-          if (data.result?.sql) {
-            try {
-              await navigator.clipboard.writeText(data.result.sql);
-            } catch (e) {
-              console.error("Failed to copy to clipboard:", e);
-            }
-          }
-        } else {
-          toast.success("Ação executada com sucesso!");
-        }
+        toast.success(data.message || "Ação executada com sucesso!");
         onExecuted();
       } else {
         toast.error(data.error || "Erro ao executar ação");
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error executing action:", error);
-      toast.error("Erro ao executar ação");
+      toast.error(error.message || "Erro ao executar ação");
     } finally {
       setIsExecuting(false);
     }
@@ -108,7 +91,7 @@ export const ActionConfirmation = ({
             {isExecuting ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Processando...
+                Executando...
               </>
             ) : (
               <>
@@ -118,10 +101,6 @@ export const ActionConfirmation = ({
             )}
           </Button>
         </div>
-        
-        <p className="text-xs text-muted-foreground">
-          💡 Por segurança, o SQL será copiado para sua área de transferência. Execute-o manualmente no SQL Editor do seu projeto Supabase.
-        </p>
       </div>
     </Card>
   );
