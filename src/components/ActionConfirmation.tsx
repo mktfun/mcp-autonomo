@@ -62,7 +62,7 @@ export const ActionConfirmation = ({
     if (actionType === "propose_sql_execution") {
       return payload.sql_code;
     } else if (actionType === "propose_github_edit") {
-      return `File: ${payload.file_path}\n\n${payload.changes_description}`;
+      return `Arquivo: ${payload.file_path}\n\nMudança: ${payload.changes_description}`;
     }
     return JSON.stringify(payload, null, 2);
   };
@@ -72,6 +72,7 @@ export const ActionConfirmation = ({
       const sql = payload.sql_code?.toUpperCase() || "";
       return sql.includes("DELETE") || sql.includes("DROP") || sql.includes("TRUNCATE");
     }
+    // GitHub edits are not destructive since we can revert commits
     return false;
   };
 
@@ -124,6 +125,17 @@ export const ActionConfirmation = ({
             >
               {getCodeBlock()}
             </SyntaxHighlighter>
+          ) : actionType === "propose_github_edit" ? (
+            <div className="bg-muted p-3 rounded-lg text-xs space-y-2">
+              <div>
+                <span className="font-semibold text-primary">Arquivo:</span>{" "}
+                <code className="text-foreground">{payload.file_path}</code>
+              </div>
+              <div>
+                <span className="font-semibold text-primary">Mudança:</span>
+                <p className="text-muted-foreground mt-1">{payload.changes_description}</p>
+              </div>
+            </div>
           ) : (
             <pre className="bg-muted p-3 rounded-lg overflow-x-auto text-xs font-mono max-h-[300px]">
               <code>{getCodeBlock()}</code>

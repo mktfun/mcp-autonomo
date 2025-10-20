@@ -260,14 +260,59 @@ Retorne APENAS o JSON de roteamento, sem nenhum outro texto.`;
             rawToolData = { success: false, error: e instanceof Error ? e.message : String(e) };
           }
         } else if (toolUsed === "propose_github_edit") {
-          // For GitHub proposals, create action with the parameters
+          // For GitHub proposals, we need to generate detailed change description
+          let filePathToEdit = toolParameters?.file_path;
+          let changesDescription = toolParameters?.changes_description;
+          
+          // If router didn't provide details, use user request
+          if (!changesDescription) {
+            changesDescription = toolParameters?.user_request || message;
+          }
+          
+          // Try to extract file path from user request if not provided
+          if (!filePathToEdit) {
+            // Make a quick call to extract file path
+            const extractPrompt = `Extraia APENAS o caminho do arquivo desta mensagem: "${message}". Se não houver caminho explícito, retorne "README.md". Responda APENAS com o caminho do arquivo, sem explicações.`;
+            
+            try {
+              const extractResp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${LOVABLE_API_KEY}`,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  model: "google/gemini-2.5-flash",
+                  messages: [
+                    { role: "system", content: "Você extrai caminhos de arquivos de mensagens. Responda APENAS com o caminho." },
+                    { role: "user", content: extractPrompt }
+                  ],
+                  temperature: 0.1,
+                }),
+              });
+              
+              if (extractResp.ok) {
+                const extractData = await extractResp.json();
+                filePathToEdit = extractData.choices[0].message.content.trim();
+                console.log("Extracted file path:", filePathToEdit);
+              }
+            } catch (e) {
+              console.error("Error extracting file path:", e);
+              filePathToEdit = "README.md"; // Fallback
+            }
+          }
+          
+          // Create the action with the GitHub edit details
           try {
             const { data: actionData, error: actionError } = await supabaseAdmin
               .from("agent_actions")
               .insert({
                 project_id: projectId,
                 action_type: toolUsed,
-                payload: toolParameters,
+                payload: { 
+                  file_path: filePathToEdit, 
+                  changes_description: changesDescription 
+                },
                 status: "pending"
               })
               .select()
@@ -282,7 +327,7 @@ Retorne APENAS o JSON de roteamento, sem nenhum outro texto.`;
                 success: true, 
                 action_id: actionData.id,
                 action_type: toolUsed,
-                payload: toolParameters,
+                payload: { file_path: filePathToEdit, changes_description: changesDescription },
                 isPendingAction: true
               };
             }
@@ -372,11 +417,20 @@ Seja conciso, profissional e analítico. Forneça contexto e significado, não a
         if (rawToolData.isPendingAction) {
           // It's a pending action that needs confirmation
           translatorSystemPrompt += `INSTRUÇÃO CRÍTICA PARA AÇÃO PENDENTE:\n`;
-          translatorSystemPrompt += `1. O código SQL gerado foi: ${JSON.stringify(rawToolData.payload?.sql_code)}\n`;
-          translatorSystemPrompt += `2. Explique ao usuário EXATAMENTE o que este código SQL faz.\n`;
-          translatorSystemPrompt += `3. IMPORTANTE: Mostre o código SQL em um bloco de código Markdown formatado com a tag 'sql'. Exemplo:\n`;
-          translatorSystemPrompt += `\`\`\`sql\nDELETE FROM\n  public.agent_actions;\n\`\`\`\n`;
-          translatorSystemPrompt += `4. ALERTE sobre os riscos, especialmente se for uma ação destrutiva (DELETE, DROP, TRUNCATE).\n`;
+          
+          if (rawToolData.action_type === "propose_sql_execution") {
+            translatorSystemPrompt += `1. O código SQL gerado foi: ${JSON.stringify(rawToolData.payload?.sql_code)}\n`;
+            translatorSystemPrompt += `2. Explique ao usuário EXATAMENTE o que este código SQL faz.\n`;
+            translatorSystemPrompt += `3. IMPORTANTE: Mostre o código SQL em um bloco de código Markdown formatado com a tag 'sql'. Exemplo:\n`;
+            translatorSystemPrompt += `\`\`\`sql\nDELETE FROM\n  public.agent_actions;\n\`\`\`\n`;
+            translatorSystemPrompt += `4. ALERTE sobre os riscos, especialmente se for uma ação destrutiva (DELETE, DROP, TRUNCATE).\n`;
+          } else if (rawToolData.action_type === "propose_github_edit") {
+            translatorSystemPrompt += `1. O arquivo que será editado: ${rawToolData.payload?.file_path}\n`;
+            translatorSystemPrompt += `2. A mudança que será aplicada: ${rawToolData.payload?.changes_description}\n`;
+            translatorSystemPrompt += `3. Explique ao usuário o que esta edição fará no arquivo.\n`;
+            translatorSystemPrompt += `4. Informe que após a confirmação, um commit será feito automaticamente no repositório GitHub.\n`;
+          }
+          
           translatorSystemPrompt += `5. Seja claro que a ação está aguardando confirmação e explique que haverá um botão para executar.\n`;
           translatorSystemPrompt += `6. NÃO execute nada agora. Apenas explique e oriente o usuário.\n`;
         } else if (toolUsed === "web_search") {

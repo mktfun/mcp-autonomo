@@ -115,42 +115,140 @@ serve(async (req) => {
         };
       }
     } else if (action.action_type === "propose_github_edit") {
-      // Execute GitHub edit
+      // Execute GitHub file edit
       const { file_path, changes_description } = action.payload;
       
       console.log("GitHub edit:", file_path, changes_description);
 
-      // Get GitHub credentials
-      const { data: credentials } = await supabaseAdmin.rpc(
-        "decrypt_project_credentials",
-        { p_project_id: action.project_id }
-      );
+      try {
+        // Get GitHub credentials
+        const { data: credentials } = await supabaseAdmin.rpc(
+          "decrypt_project_credentials",
+          { p_project_id: action.project_id }
+        );
 
-      if (!credentials || !credentials[0]?.github_pat) {
-        throw new Error("GitHub credentials not found");
+        if (!credentials || !credentials[0]?.github_pat) {
+          throw new Error("GitHub credentials not found");
+        }
+
+        // Get project GitHub info
+        const { data: project } = await supabaseAdmin
+          .from("projects")
+          .select("github_repo_owner, github_repo_name")
+          .eq("id", action.project_id)
+          .single();
+
+        if (!project?.github_repo_owner || !project?.github_repo_name) {
+          throw new Error("GitHub repository not configured");
+        }
+
+        const owner = project.github_repo_owner;
+        const repo = project.github_repo_name;
+        const githubPat = credentials[0].github_pat;
+
+        console.log(`Editing file: ${owner}/${repo}/${file_path}`);
+
+        // STEP 1: Read current file content
+        const getFileUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${file_path}`;
+        const getFileResponse = await fetch(getFileUrl, {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${githubPat}`,
+            Accept: "application/vnd.github.v3+json",
+            "User-Agent": "Supabase-Edge-Function",
+          },
+        });
+
+        if (!getFileResponse.ok) {
+          const errorText = await getFileResponse.text();
+          throw new Error(`Failed to read file from GitHub: ${errorText}`);
+        }
+
+        const fileData = await getFileResponse.json();
+        const currentContent = atob(fileData.content); // Decode base64
+        const fileSha = fileData.sha;
+
+        console.log("Current file content length:", currentContent.length);
+
+        // STEP 2: Generate new content using AI
+        const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+        if (!LOVABLE_API_KEY) {
+          throw new Error("LOVABLE_API_KEY not configured");
+        }
+
+        const editPrompt = `Aqui está o conteúdo atual do arquivo '${file_path}':\n\n\`\`\`\n${currentContent}\n\`\`\`\n\nAplique a seguinte mudança: '${changes_description}'.\n\nRetorne APENAS o conteúdo completo do arquivo modificado, sem nenhuma outra explicação, sem blocos de código markdown, apenas o conteúdo puro do arquivo.`;
+
+        const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${LOVABLE_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "google/gemini-2.5-flash",
+            messages: [
+              { 
+                role: "system", 
+                content: "Você é um editor de código especializado. Retorne APENAS o código modificado, sem explicações, sem markdown." 
+              },
+              { role: "user", content: editPrompt }
+            ],
+            temperature: 0.2,
+          }),
+        });
+
+        if (!aiResponse.ok) {
+          throw new Error("Failed to generate new file content with AI");
+        }
+
+        const aiData = await aiResponse.json();
+        let newContent = aiData.choices[0].message.content.trim();
+        
+        // Remove markdown code blocks if AI added them despite instructions
+        newContent = newContent.replace(/^```[\w]*\n/g, '').replace(/\n```$/g, '');
+
+        console.log("New file content length:", newContent.length);
+
+        // STEP 3: Write the modified file back to GitHub
+        const updateFileUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${file_path}`;
+        const updateFileResponse = await fetch(updateFileUrl, {
+          method: "PUT",
+          headers: {
+            Authorization: `Bearer ${githubPat}`,
+            Accept: "application/vnd.github.v3+json",
+            "User-Agent": "Supabase-Edge-Function",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            message: `Automated edit by AI Agent: ${changes_description}`,
+            content: btoa(newContent), // Encode to base64
+            sha: fileSha,
+          }),
+        });
+
+        if (!updateFileResponse.ok) {
+          const errorText = await updateFileResponse.text();
+          throw new Error(`Failed to commit file to GitHub: ${errorText}`);
+        }
+
+        const commitData = await updateFileResponse.json();
+        console.log("File committed successfully:", commitData.commit.sha);
+
+        executionResult = {
+          success: true,
+          result: {
+            commit_sha: commitData.commit.sha,
+            commit_url: commitData.commit.html_url,
+          },
+          message: `Arquivo '${file_path}' editado com sucesso! Commit: ${commitData.commit.sha}`,
+        };
+      } catch (e) {
+        console.error("GitHub edit error:", e);
+        executionResult = {
+          success: false,
+          error: e instanceof Error ? e.message : String(e),
+        };
       }
-
-      // Get project GitHub info
-      const { data: project } = await supabaseAdmin
-        .from("projects")
-        .select("github_repo_owner, github_repo_name")
-        .eq("id", action.project_id)
-        .single();
-
-      if (!project?.github_repo_owner || !project?.github_repo_name) {
-        throw new Error("GitHub repository not configured");
-      }
-
-      // TODO: Implement GitHub API call to edit file
-      // This would involve:
-      // 1. Getting the current file content
-      // 2. Applying the changes
-      // 3. Creating a commit
-      
-      executionResult = {
-        success: false,
-        error: "GitHub edit not yet implemented"
-      };
     } else {
       throw new Error(`Unknown action type: ${action.action_type}`);
     }
