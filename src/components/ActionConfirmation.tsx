@@ -22,22 +22,67 @@ export const ActionConfirmation = ({
 }: ActionConfirmationProps) => {
   const [isExecuting, setIsExecuting] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [actionExecuted, setActionExecuted] = useState(false);
 
   const handleConfirm = async () => {
     setIsExecuting(true);
     try {
-      const { data, error } = await supabase.functions.invoke("execute-agent-action", {
-        body: { actionId },
-      });
+      // Pre-check: verify action status before executing
+      const { data: actionData, error: checkError } = await supabase
+        .from('agent_actions')
+        .select('status')
+        .eq('id', actionId)
+        .maybeSingle();
 
-      if (error) throw error;
-
-      if (data.success) {
-        toast.success(data.message || "Ação executada com sucesso!");
-        onExecuted();
-      } else {
-        toast.error(data.error || "Erro ao executar ação");
+      if (checkError) {
+        console.error("Error checking action status:", checkError);
+        toast.error("Erro ao verificar status da ação");
+        return;
       }
+
+      if (!actionData || actionData.status !== 'pending') {
+        toast.error('Esta ação já foi processada. Gere uma nova ação.');
+        setActionExecuted(true);
+        return;
+      }
+
+      // Use fetch instead of invoke to get detailed error messages
+      const session = await supabase.auth.getSession();
+      const token = session.data.session?.access_token;
+
+      if (!token) {
+        toast.error("Não autenticado");
+        return;
+      }
+
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/execute-agent-action`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({ actionId }),
+        }
+      );
+
+      const result = await response.json().catch(() => ({}));
+
+      if (!response.ok || !result?.success) {
+        const errorMessage = result?.error || 'Erro ao executar ação';
+        toast.error(errorMessage);
+        
+        // If error indicates action is not pending, hide button
+        if (String(errorMessage).toLowerCase().includes('not pending')) {
+          setActionExecuted(true);
+        }
+        return;
+      }
+
+      toast.success(result.message || 'Ação executada com sucesso!');
+      setActionExecuted(true);
+      onExecuted();
     } catch (error: any) {
       console.error("Error executing action:", error);
       toast.error(error.message || "Erro ao executar ação");
@@ -143,27 +188,35 @@ export const ActionConfirmation = ({
           )}
         </div>
 
-        <div className="flex gap-2">
-          <Button
-            onClick={handleConfirm}
-            disabled={isExecuting}
-            className="flex-1"
-            size="lg"
-            variant={isDestructive() ? "destructive" : "default"}
-          >
-            {isExecuting ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Executando...
-              </>
-            ) : (
-              <>
-                <Zap className="mr-2 h-4 w-4" />
-                {isDestructive() ? "Confirmar Ação Destrutiva" : "Confirmar e Executar"}
-              </>
-            )}
-          </Button>
-        </div>
+        {!actionExecuted ? (
+          <div className="flex gap-2">
+            <Button
+              onClick={handleConfirm}
+              disabled={isExecuting}
+              className="flex-1"
+              size="lg"
+              variant={isDestructive() ? "destructive" : "default"}
+            >
+              {isExecuting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Executando...
+                </>
+              ) : (
+                <>
+                  <Zap className="mr-2 h-4 w-4" />
+                  {isDestructive() ? "Confirmar Ação Destrutiva" : "Confirmar e Executar"}
+                </>
+              )}
+            </Button>
+          </div>
+        ) : (
+          <div className="p-3 bg-muted rounded-lg text-center">
+            <p className="text-sm text-muted-foreground">
+              Ação processada. Para fazer novas alterações, gere uma nova ação através do chat.
+            </p>
+          </div>
+        )}
       </div>
     </Card>
   );
