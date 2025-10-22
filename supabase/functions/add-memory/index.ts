@@ -38,10 +38,10 @@ serve(async (req) => {
   }
 
   try {
-    const { projectId } = await req.json();
+    const { projectId, content } = await req.json();
 
-    if (!projectId) {
-      throw new Error("projectId is required");
+    if (!projectId || !content) {
+      throw new Error("projectId and content are required");
     }
 
     // Initialize Supabase Admin client
@@ -67,12 +67,12 @@ serve(async (req) => {
       throw new Error("Unauthorized");
     }
 
-    console.log("Fetching Supabase schema for user:", user.id, "project:", projectId);
+    console.log("Adding memory for user:", user.id, "project:", projectId);
 
-    // Fetch project details
+    // Verify user owns the project
     const { data: project, error: projectError } = await supabaseAdmin
       .from("projects")
-      .select("supabase_project_url")
+      .select("id")
       .eq("id", projectId)
       .eq("user_id", user.id)
       .single();
@@ -81,91 +81,29 @@ serve(async (req) => {
       throw new Error("Project not found or unauthorized");
     }
 
-    if (!project.supabase_project_url) {
-      return new Response(
-        JSON.stringify({ 
-          success: false, 
-          error: "Supabase integration not configured for this project" 
-        }),
-        {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
+    // Create memory entry
+    const { data: memoryEntry, error: memoryError } = await supabaseAdmin
+      .from("memory_entries")
+      .insert({
+        project_id: projectId,
+        user_id: user.id,
+        content,
+      })
+      .select()
+      .single();
+
+    if (memoryError) {
+      throw new Error(`Failed to create memory entry: ${memoryError.message}`);
     }
 
-    // Decrypt Supabase API key using authenticated context
-    const supabaseWithAuth = createClient(
-      Deno.env.get("SUPABASE_URL") ?? "",
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
-      {
-        auth: {
-          autoRefreshToken: false,
-          persistSession: false,
-        },
-        global: {
-          headers: { Authorization: authHeader },
-        },
-      }
-    );
-
-    const { data: projectCreds, error: credsError } = await supabaseWithAuth.rpc('decrypt_project_credentials', {
-      p_project_id: projectId
-    });
-
-    console.log("Decrypt credentials result:", { 
-      hasError: !!credsError, 
-      hasCreds: !!projectCreds, 
-      credsLength: projectCreds?.length,
-      hasSupabaseKey: projectCreds?.[0]?.supabase_api_key ? 'yes' : 'no'
-    });
-
-    if (credsError || !projectCreds || projectCreds.length === 0 || !projectCreds[0].supabase_api_key) {
-      console.error("Credentials error details:", credsError);
-      return new Response(
-        JSON.stringify({ 
-          success: false, 
-          error: "Supabase credentials not found" 
-        }),
-        {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
-    }
-
-    const supabaseApiKey = projectCreds[0].supabase_api_key;
-
-    // Connect to user's Supabase project
-    console.log(`Connecting to user's Supabase project: ${project.supabase_project_url}`);
-    const projectSupabase = createClient(
-      project.supabase_project_url,
-      supabaseApiKey
-    );
-
-    // Fetch schema information via RPC
-    console.log("Calling get_schema_info RPC...");
-    const { data: schema, error: schemaError } = await projectSupabase.rpc('get_schema_info');
-
-    if (schemaError) {
-      console.error("Error fetching schema via RPC:", schemaError);
-      return new Response(
-        JSON.stringify({ 
-          success: false, 
-          error: schemaError.message || "Failed to fetch schema information" 
-        }),
-        {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
-    }
-
-    console.log(`Schema fetched successfully via RPC`);
+    console.log("Memory entry created successfully:", memoryEntry.id);
 
     const output = {
       success: true,
       data: {
-        schema,
-        projectUrl: project.supabase_project_url,
-        totalTables: schema.length
+        memoryId: memoryEntry.id,
+        content: memoryEntry.content,
+        timestamp: memoryEntry.timestamp,
       }
     };
 
@@ -174,8 +112,8 @@ serve(async (req) => {
       supabaseAdmin,
       user.id,
       projectId,
-      'tool-get-supabase-schema',
-      { projectId },
+      'add-memory',
+      { projectId, content },
       output,
       'success'
     );
@@ -187,11 +125,11 @@ serve(async (req) => {
       }
     );
   } catch (error: any) {
-    console.error("Error in tool-get-supabase-schema:", error);
+    console.error("Error in add-memory:", error);
     
     // Try to log error execution if we have the necessary data
     try {
-      const { projectId } = await req.json().catch(() => ({}));
+      const { projectId, content } = await req.json().catch(() => ({}));
       const authHeader = req.headers.get("Authorization");
       
       if (projectId && authHeader) {
@@ -207,8 +145,8 @@ serve(async (req) => {
             supabaseAdmin,
             user.id,
             projectId,
-            'tool-get-supabase-schema',
-            { projectId },
+            'add-memory',
+            { projectId, content },
             { success: false, error: error.message },
             'error',
             error.message

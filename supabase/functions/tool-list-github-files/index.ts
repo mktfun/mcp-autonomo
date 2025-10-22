@@ -6,6 +6,32 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// Helper function to log tool execution
+async function logToolExecution(
+  supabase: any,
+  userId: string,
+  projectId: string,
+  toolName: string,
+  toolInput: any,
+  toolOutput: any,
+  status: 'success' | 'error',
+  errorMessage?: string
+) {
+  try {
+    await supabase.from('agent_logs').insert({
+      user_id: userId,
+      project_id: projectId,
+      tool_name: toolName,
+      tool_input: toolInput,
+      tool_output: toolOutput,
+      status,
+      error_message: errorMessage,
+    });
+  } catch (logError) {
+    console.error('Failed to log tool execution:', logError);
+  }
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -162,19 +188,65 @@ serve(async (req) => {
 
     console.log(`Found ${files.length} files in repository`);
 
-    return new Response(
-      JSON.stringify({ 
-        success: true, 
+    const output = {
+      success: true,
+      data: {
         files,
         repository: `${project.github_repo_owner}/${project.github_repo_name}`,
         totalFiles: files.length
-      }),
+      }
+    };
+
+    // Log successful execution
+    await logToolExecution(
+      supabaseAdmin,
+      user.id,
+      projectId,
+      'tool-list-github-files',
+      { projectId },
+      output,
+      'success'
+    );
+
+    return new Response(
+      JSON.stringify(output),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       }
     );
   } catch (error: any) {
     console.error("Error in tool-list-github-files:", error);
+    
+    // Try to log error execution if we have the necessary data
+    try {
+      const { projectId } = await req.json().catch(() => ({}));
+      const authHeader = req.headers.get("Authorization");
+      
+      if (projectId && authHeader) {
+        const supabaseAdmin = createClient(
+          Deno.env.get("SUPABASE_URL") ?? "",
+          Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+        );
+        const token = authHeader.replace("Bearer ", "");
+        const { data: { user } } = await supabaseAdmin.auth.getUser(token);
+        
+        if (user) {
+          await logToolExecution(
+            supabaseAdmin,
+            user.id,
+            projectId,
+            'tool-list-github-files',
+            { projectId },
+            { success: false, error: error.message },
+            'error',
+            error.message
+          );
+        }
+      }
+    } catch (logError) {
+      console.error('Failed to log error:', logError);
+    }
+
     return new Response(
       JSON.stringify({ success: false, error: error.message }),
       {

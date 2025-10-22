@@ -20,3 +20,6 @@ verify_jwt = false
 
 [functions.execute-agent-action]
 verify_jwt = true
+
+[functions.add-memory]
+verify_jwt = false
