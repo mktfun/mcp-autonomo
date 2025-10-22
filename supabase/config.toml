@@ -3,12 +3,6 @@ project_id = "nvbhxsytawlvleiqgaxz"
 [functions.generate-chat-response]
 verify_jwt = false
 
-[functions.planner]
-verify_jwt = false
-
-[functions.execute-plan]
-verify_jwt = false
-
 [functions.tool-list-github-files]
 verify_jwt = false
 

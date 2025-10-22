@@ -41,296 +41,312 @@ serve(async (req) => {
       throw new Error("Unauthorized");
     }
 
-    console.log("User authenticated:", user.id);
-    console.log("Action ID:", actionId);
+    console.log("Execute-agent-action: User authenticated:", user.id);
 
-    // Get the action and verify ownership
-    const { data: action, error: actionError } = await supabaseAdmin
+    // Fetch the agent action
+    const { data: agentAction, error: actionError } = await supabaseAdmin
       .from("agent_actions")
-      .select(`
-        *,
-        projects!inner(user_id)
-      `)
+      .select("*")
       .eq("id", actionId)
       .single();
 
-    if (actionError) {
-      console.error("Error fetching action:", actionError);
+    if (actionError || !agentAction) {
       throw new Error("Action not found");
     }
 
-    // Security check: verify user owns the project
-    if (action.projects.user_id !== user.id) {
-      console.error("Unauthorized: user does not own this project");
-      throw new Error("Unauthorized: you do not own this action");
+    // Verify user owns the project
+    const { data: project, error: projectError } = await supabaseAdmin
+      .from("projects")
+      .select("*")
+      .eq("id", agentAction.project_id)
+      .eq("user_id", user.id)
+      .single();
+
+    if (projectError || !project) {
+      throw new Error("Project not found or unauthorized");
     }
 
-    // Check if action is still pending
-    if (action.status !== "pending") {
-      throw new Error(`Action is not pending (current status: ${action.status})`);
+    // Check if action is already executed
+    if (agentAction.status === "executed") {
+      throw new Error("Action already executed");
     }
 
-    console.log("Action type:", action.action_type);
-    console.log("Action payload:", action.payload);
-
-    let executionResult: any = { success: false };
-
-    // Execute based on action type
-    if (action.action_type === "propose_sql_execution") {
-      // Execute SQL on the project database
-      const sqlCode = action.payload.sql_code;
-      
-      if (!sqlCode) {
-        throw new Error("No SQL code in payload");
-      }
-
-      console.log("Executing SQL:", sqlCode);
-
-      try {
-        // Execute directly on this Supabase project's database
-        // Parse and execute the SQL using the admin client
-        const { data, error } = await supabaseAdmin.rpc('exec_sql', {
-          sql: sqlCode
-        });
-
-        if (error) {
-          console.error("SQL execution error:", error);
-          executionResult = {
-            success: false,
-            error: error.message || "Falha ao executar SQL"
-          };
-        } else {
-          console.log("SQL executed successfully:", data);
-          executionResult = {
-            success: true,
-            result: data,
-            message: "SQL executado com sucesso!"
-          };
-        }
-      } catch (e) {
-        console.error("SQL execution exception:", e);
-        executionResult = {
-          success: false,
-          error: e instanceof Error ? e.message : String(e)
-        };
-      }
-    } else if (action.action_type === "propose_github_edit") {
-      // Execute GitHub file edit
-      const { file_path, changes_description } = action.payload;
-      
-      console.log("GitHub edit:", file_path, changes_description);
-
-      try {
-        // Get GitHub credentials
-        console.log("🔐 Buscando credenciais do GitHub para projeto:", action.project_id);
-        const { data: credentials, error: credError } = await supabaseAdmin.rpc(
-          "decrypt_project_credentials",
-          { p_project_id: action.project_id }
-        );
-
-        console.log("Resposta da RPC decrypt_project_credentials:", JSON.stringify(credentials));
-        if (credError) {
-          console.error("Erro ao buscar credenciais:", credError);
-          throw new Error(`Erro ao buscar credenciais: ${credError.message}`);
-        }
-
-        if (!credentials || !credentials[0]?.github_pat) {
-          console.error("Credenciais não encontradas ou github_pat ausente. Dados:", credentials);
-          throw new Error("GitHub credentials not found");
-        }
-
-        console.log("✅ Credenciais do GitHub recuperadas com sucesso");
-
-        // Get project GitHub info
-        const { data: project } = await supabaseAdmin
-          .from("projects")
-          .select("github_repo_owner, github_repo_name")
-          .eq("id", action.project_id)
-          .single();
-
-        if (!project?.github_repo_owner || !project?.github_repo_name) {
-          throw new Error("GitHub repository not configured");
-        }
-
-        const owner = project.github_repo_owner;
-        const repo = project.github_repo_name;
-        const githubPat = credentials[0].github_pat;
-
-        console.log(`Editing file: ${owner}/${repo}/${file_path}`);
-
-        // ========================================
-        // ATO 1: Lendo arquivo do GitHub...
-        // ========================================
-        console.log("🔵 ATO 1: Lendo arquivo do GitHub...");
-        const getFileUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${file_path}`;
-        console.log("GET URL:", getFileUrl);
-        
-        const getFileResponse = await fetch(getFileUrl, {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${githubPat}`,
-            Accept: "application/vnd.github.v3+json",
-            "User-Agent": "Supabase-Edge-Function",
-          },
-        });
-
-        console.log("GitHub GET response status:", getFileResponse.status);
-        
-        if (!getFileResponse.ok) {
-          const errorText = await getFileResponse.text();
-          console.error("❌ Erro ao ler arquivo do GitHub:", errorText);
-          throw new Error(`Failed to read file from GitHub: ${errorText}`);
-        }
-
-        const fileData = await getFileResponse.json();
-        const currentContent = atob(fileData.content); // Decode base64
-        const fileSha = fileData.sha;
-
-        console.log("✅ Arquivo lido com sucesso!");
-        console.log("  - SHA do arquivo:", fileSha);
-        console.log("  - Tamanho do conteúdo:", currentContent.length, "caracteres");
-        console.log("  - Primeiros 100 caracteres:", currentContent.substring(0, 100));
-
-        // ========================================
-        // ATO 2: Gerando novo conteúdo com a IA...
-        // ========================================
-        console.log("🟡 ATO 2: Gerando novo conteúdo com a IA...");
-        const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-        if (!LOVABLE_API_KEY) {
-          throw new Error("LOVABLE_API_KEY not configured");
-        }
-
-        const editPrompt = `Aqui está o conteúdo atual do arquivo '${file_path}':\n\n\`\`\`\n${currentContent}\n\`\`\`\n\nAplique a seguinte mudança: '${changes_description}'.\n\nRetorne APENAS o conteúdo completo do arquivo modificado, sem nenhuma outra explicação, sem blocos de código markdown, apenas o conteúdo puro do arquivo.`;
-
-        console.log("Chamando Lovable AI Gateway...");
-        const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${LOVABLE_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model: "google/gemini-2.5-flash",
-            messages: [
-              { 
-                role: "system", 
-                content: "Você é um editor de código especializado. Retorne APENAS o código modificado, sem explicações, sem markdown." 
-              },
-              { role: "user", content: editPrompt }
-            ],
-            temperature: 0.2,
-          }),
-        });
-
-        console.log("AI response status:", aiResponse.status);
-        
-        if (!aiResponse.ok) {
-          const aiErrorText = await aiResponse.text();
-          console.error("❌ Erro na resposta da IA:", aiErrorText);
-          throw new Error(`Failed to generate new file content with AI: ${aiErrorText}`);
-        }
-
-        const aiData = await aiResponse.json();
-        let newContent = aiData.choices[0].message.content.trim();
-        
-        // Remove markdown code blocks if AI added them despite instructions
-        newContent = newContent.replace(/^```[\w]*\n/g, '').replace(/\n```$/g, '');
-
-        console.log("✅ Novo conteúdo gerado com sucesso!");
-        console.log("  - Tamanho do novo conteúdo:", newContent.length, "caracteres");
-        console.log("  - Primeiros 100 caracteres:", newContent.substring(0, 100));
-
-        // ========================================
-        // ATO 3: Enviando novo conteúdo para o GitHub...
-        // ========================================
-        console.log("🟢 ATO 3: Enviando novo conteúdo para o GitHub...");
-        const updateFileUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${file_path}`;
-        console.log("PUT URL:", updateFileUrl);
-        console.log("Usando SHA:", fileSha);
-        
-        const commitPayload = {
-          message: `Automated edit by AI Agent: ${changes_description}`,
-          content: btoa(newContent), // Encode to base64
-          sha: fileSha,
-        };
-        
-        console.log("Payload para commit (conteúdo em base64, SHA incluído)");
-        
-        const updateFileResponse = await fetch(updateFileUrl, {
-          method: "PUT",
-          headers: {
-            Authorization: `Bearer ${githubPat}`,
-            Accept: "application/vnd.github.v3+json",
-            "User-Agent": "Supabase-Edge-Function",
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(commitPayload),
-        });
-
-        console.log("GitHub PUT response status:", updateFileResponse.status);
-        
-        if (!updateFileResponse.ok) {
-          const errorText = await updateFileResponse.text();
-          console.error("❌ ERRO COMPLETO DA API DO GITHUB:");
-          console.error(errorText);
-          throw new Error(`Failed to commit file to GitHub: ${errorText}`);
-        }
-
-        const commitData = await updateFileResponse.json();
-        console.log("✅ Arquivo commitado com sucesso!");
-        console.log("  - SHA do commit:", commitData.commit.sha);
-        console.log("  - URL do commit:", commitData.commit.html_url);
-
-        executionResult = {
-          success: true,
-          result: {
-            commit_sha: commitData.commit.sha,
-            commit_url: commitData.commit.html_url,
-          },
-          message: `Arquivo '${file_path}' editado com sucesso! Commit: ${commitData.commit.sha}`,
-        };
-      } catch (e) {
-        console.error("GitHub edit error:", e);
-        executionResult = {
-          success: false,
-          error: e instanceof Error ? e.message : String(e),
-        };
-      }
-    } else {
-      throw new Error(`Unknown action type: ${action.action_type}`);
-    }
-
-    // Update action status
-    const newStatus = executionResult.success ? "executed" : "failed";
+    const plan = agentAction.payload;
     
-    await supabaseAdmin
-      .from("agent_actions")
-      .update({
-        status: newStatus,
-        executed_at: new Date().toISOString(),
-      })
-      .eq("id", actionId);
+    if (!plan || !plan.plan || !Array.isArray(plan.plan)) {
+      throw new Error("Invalid plan structure");
+    }
 
-    console.log("Action status updated to:", newStatus);
+    console.log(`Executing plan with ${plan.plan.length} steps`);
 
-    return new Response(
-      JSON.stringify({
-        success: executionResult.success,
-        result: executionResult.result,
-        message: executionResult.message,
-        error: executionResult.error,
-      }),
-      {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
-    );
+    // Create a streaming response
+    const stream = new ReadableStream({
+      async start(controller) {
+        const encoder = new TextEncoder();
+        
+        const sendEvent = (type: string, data: any) => {
+          const message = `data: ${JSON.stringify({ type, ...data })}\n\n`;
+          controller.enqueue(encoder.encode(message));
+        };
+
+        try {
+          sendEvent("status", { message: `Iniciando execução de ${plan.plan.length} passo(s)...` });
+
+          const stepResults: any[] = [];
+
+          // Execute each step sequentially
+          for (const step of plan.plan) {
+            sendEvent("status", { 
+              message: `Passo ${step.step}: ${step.reasoning}`,
+              currentStep: step.step,
+              totalSteps: plan.plan.length
+            });
+
+            let stepResult = null;
+
+            try {
+              // Route to appropriate tool
+              if (step.tool === "list_github_files") {
+                const toolResp = await fetch(
+                  `${Deno.env.get("SUPABASE_URL")}/functions/v1/tool-list-github-files`,
+                  {
+                    method: "POST",
+                    headers: {
+                      Authorization: authHeader,
+                      "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({ projectId: agentAction.project_id }),
+                  }
+                );
+                stepResult = await toolResp.json();
+              } else if (step.tool === "get_supabase_schema") {
+                const toolResp = await fetch(
+                  `${Deno.env.get("SUPABASE_URL")}/functions/v1/tool-get-supabase-schema`,
+                  {
+                    method: "POST",
+                    headers: {
+                      Authorization: authHeader,
+                      "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({ projectId: agentAction.project_id }),
+                  }
+                );
+                stepResult = await toolResp.json();
+              } else if (step.tool === "web_search") {
+                const toolResp = await fetch(
+                  `${Deno.env.get("SUPABASE_URL")}/functions/v1/tool-web-search`,
+                  {
+                    method: "POST",
+                    headers: {
+                      Authorization: authHeader,
+                      "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({ 
+                      query: step.parameters?.query || "general search"
+                    }),
+                  }
+                );
+                stepResult = await toolResp.json();
+              } else if (step.tool === "add_memory") {
+                const toolResp = await fetch(
+                  `${Deno.env.get("SUPABASE_URL")}/functions/v1/add-memory`,
+                  {
+                    method: "POST",
+                    headers: {
+                      Authorization: authHeader,
+                      "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({ 
+                      projectId: agentAction.project_id,
+                      content: step.parameters?.content || "Memory entry"
+                    }),
+                  }
+                );
+                stepResult = await toolResp.json();
+              } else {
+                stepResult = { 
+                  success: false, 
+                  error: `Unknown tool: ${step.tool}` 
+                };
+              }
+
+              stepResults.push({
+                step: step.step,
+                tool: step.tool,
+                reasoning: step.reasoning,
+                result: stepResult
+              });
+
+              sendEvent("step_complete", {
+                step: step.step,
+                tool: step.tool,
+                success: stepResult?.success || false
+              });
+
+            } catch (stepError: any) {
+              console.error(`Error executing step ${step.step}:`, stepError);
+              stepResults.push({
+                step: step.step,
+                tool: step.tool,
+                reasoning: step.reasoning,
+                result: { success: false, error: stepError.message }
+              });
+              
+              sendEvent("step_error", {
+                step: step.step,
+                tool: step.tool,
+                error: stepError.message
+              });
+            }
+          }
+
+          // Save all results to memory
+          const memorySummary = `Execução do plano concluída:\n${stepResults.map(r => 
+            `- Passo ${r.step} (${r.tool}): ${r.result.success ? '✓' : '✗'}`
+          ).join('\n')}`;
+
+          await fetch(
+            `${Deno.env.get("SUPABASE_URL")}/functions/v1/add-memory`,
+            {
+              method: "POST",
+              headers: {
+                Authorization: authHeader,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ 
+                projectId: agentAction.project_id,
+                content: memorySummary
+              }),
+            }
+          );
+
+          sendEvent("status", { message: "Gerando resposta final..." });
+
+          // Get Lovable API key for final synthesis
+          const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+          if (!LOVABLE_API_KEY) {
+            throw new Error("LOVABLE_API_KEY is not configured");
+          }
+
+          // Call AI to synthesize final response
+          const translatorSystemPrompt = `Você é um Arquiteto de Software Sênior. Analise os resultados das ferramentas executadas e forneça uma resposta clara, estruturada e útil para o usuário.
+
+RESULTADOS DAS FERRAMENTAS:
+${JSON.stringify(stepResults, null, 2)}
+
+Forneça:
+1. Um resumo executivo do que foi encontrado
+2. Insights importantes ou padrões identificados
+3. Recomendações práticas se aplicável
+
+Seja conciso mas completo. Use markdown para formatação.`;
+
+          const translatorResp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${LOVABLE_API_KEY}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              model: "google/gemini-2.5-flash",
+              messages: [
+                { role: "system", content: translatorSystemPrompt },
+                { role: "user", content: "Analise os resultados e forneça sua resposta." }
+              ],
+              stream: true,
+              temperature: 0.7,
+            }),
+          });
+
+          if (!translatorResp.ok) {
+            throw new Error("Failed to generate final response");
+          }
+
+          // Stream the AI response
+          const reader = translatorResp.body?.getReader();
+          const decoder = new TextDecoder();
+          
+          if (!reader) {
+            throw new Error("Failed to get response reader");
+          }
+
+          let textBuffer = "";
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            
+            textBuffer += decoder.decode(value, { stream: true });
+            
+            let newlineIndex: number;
+            while ((newlineIndex = textBuffer.indexOf("\n")) !== -1) {
+              let line = textBuffer.slice(0, newlineIndex);
+              textBuffer = textBuffer.slice(newlineIndex + 1);
+
+              if (line.endsWith("\r")) line = line.slice(0, -1);
+              if (line.startsWith(":") || line.trim() === "") continue;
+              if (!line.startsWith("data: ")) continue;
+
+              const jsonStr = line.slice(6).trim();
+              if (jsonStr === "[DONE]") break;
+
+              try {
+                const parsed = JSON.parse(jsonStr);
+                const content = parsed.choices?.[0]?.delta?.content;
+                if (content) {
+                  sendEvent("llm_chunk", { content });
+                }
+              } catch {
+                // Incomplete JSON, put it back
+                textBuffer = line + "\n" + textBuffer;
+                break;
+              }
+            }
+          }
+
+          // Update action status to 'executed'
+          await supabaseAdmin
+            .from("agent_actions")
+            .update({ 
+              status: "executed",
+              executed_at: new Date().toISOString()
+            })
+            .eq("id", actionId);
+
+          sendEvent("complete", { message: "Execução concluída!" });
+          controller.close();
+
+        } catch (error: any) {
+          console.error("Error during plan execution:", error);
+          
+          // Update action status to 'failed'
+          await supabaseAdmin
+            .from("agent_actions")
+            .update({ 
+              status: "failed",
+            })
+            .eq("id", actionId);
+
+          sendEvent("error", { message: error.message });
+          controller.close();
+        }
+      },
+    });
+
+    return new Response(stream, {
+      headers: {
+        ...corsHeaders,
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+      },
+    });
+
   } catch (error: any) {
     console.error("Error in execute-agent-action:", error);
+    
     return new Response(
-      JSON.stringify({ 
-        success: false,
-        error: error.message 
-      }),
+      JSON.stringify({ success: false, error: error.message }),
       {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },

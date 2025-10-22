@@ -189,9 +189,9 @@ const ProjectPage = () => {
     setIsProcessing(true);
 
     try {
-      // Call the planner edge function
+      // Call the generate-chat-response edge function (now the orchestrator)
       const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/planner`,
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-chat-response`,
         {
           method: "POST",
           headers: {
@@ -200,7 +200,7 @@ const ProjectPage = () => {
           },
           body: JSON.stringify({
             projectId: id,
-            objective: userCommand,
+            message: userCommand,
           }),
         }
       );
@@ -224,7 +224,7 @@ const ProjectPage = () => {
           ? `Criei um plano de ${planData.data.plan.length} passo(s) para executar sua solicitação. Revise e confirme para executar.`
           : planData.data.summary || "Entendi sua mensagem.",
         plan: planData.data.needsExecution ? {
-          planLogId: planData.data.planLogId,
+          planLogId: planData.data.actionId,
           steps: planData.data.plan,
           summary: planData.data.summary,
           needsExecution: planData.data.needsExecution
@@ -251,13 +251,13 @@ const ProjectPage = () => {
     }
   };
 
-  const handleExecutePlan = async (planLogId: string) => {
+  const handleExecutePlan = async (actionId: string) => {
     setIsProcessing(true);
 
     try {
-      // Call the execute-plan edge function
+      // Call the execute-agent-action edge function
       const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/execute-plan`,
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/execute-agent-action`,
         {
           method: "POST",
           headers: {
@@ -265,8 +265,7 @@ const ProjectPage = () => {
             "Authorization": `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}`,
           },
           body: JSON.stringify({
-            planLogId,
-            projectId: id,
+            actionId,
           }),
         }
       );
