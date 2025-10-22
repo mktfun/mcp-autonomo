@@ -1,6 +1,6 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
-import { ChevronDown, ExternalLink, CheckCircle, XCircle } from "lucide-react";
+import { ChevronDown, ExternalLink, CheckCircle, XCircle, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -29,12 +29,25 @@ interface ChatMessageProps {
     actionType: string;
     payload: any;
   };
+  plan?: {
+    planLogId: string;
+    steps: Array<{
+      step: number;
+      tool: string;
+      parameters: any;
+      reasoning: string;
+    }>;
+    summary: string;
+    needsExecution: boolean;
+  };
+  onExecutePlan?: (planLogId: string) => void;
 }
 
-export const ChatMessage = ({ sender, message, isLoading, thoughtSteps, currentStatus, sources, createdAt, pendingAction }: ChatMessageProps) => {
+export const ChatMessage = ({ sender, message, isLoading, thoughtSteps, currentStatus, sources, createdAt, pendingAction, plan, onExecutePlan }: ChatMessageProps) => {
   const isUser = sender === 'user';
   const [actionStatus, setActionStatus] = useState<'pending' | 'success' | 'failed' | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [isPlanExecuting, setIsPlanExecuting] = useState(false);
 
   // Check action status on mount if pendingAction exists
   useEffect(() => {
@@ -173,6 +186,49 @@ export const ChatMessage = ({ sender, message, isLoading, thoughtSteps, currentS
                       <span className="truncate">{new URL(source).hostname}</span>
                     </a>
                   ))}
+                </div>
+              </div>
+            )}
+
+            {/* Plan Display Section */}
+            {plan && plan.needsExecution && !isPlanExecuting && (
+              <div className="mt-md p-md bg-primary/5 border border-primary/20 rounded-lg">
+                <h3 className="text-sm font-semibold text-primary mb-sm">📋 Plano de Execução</h3>
+                <p className="text-sm text-muted-foreground mb-md">{plan.summary}</p>
+                
+                <div className="space-y-sm mb-md">
+                  {plan.steps.map((step) => (
+                    <div key={step.step} className="bg-background/50 p-sm rounded border border-border">
+                      <div className="flex items-start gap-sm">
+                        <span className="text-xs font-bold text-primary bg-primary/10 px-2 py-1 rounded">
+                          {step.step}
+                        </span>
+                        <div className="flex-1">
+                          <p className="text-sm font-medium">{step.tool}</p>
+                          <p className="text-xs text-muted-foreground mt-1">{step.reasoning}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <button
+                  onClick={() => {
+                    setIsPlanExecuting(true);
+                    onExecutePlan?.(plan.planLogId);
+                  }}
+                  className="w-full py-sm px-md bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors font-medium text-sm"
+                >
+                  ✓ Confirmar e Executar Plano
+                </button>
+              </div>
+            )}
+
+            {isPlanExecuting && (
+              <div className="mt-md p-md bg-primary/5 border border-primary/20 rounded-lg">
+                <div className="flex items-center gap-sm text-sm text-primary">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>Executando plano...</span>
                 </div>
               </div>
             )}

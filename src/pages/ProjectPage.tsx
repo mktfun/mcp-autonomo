@@ -43,6 +43,17 @@ interface ChatMessage {
     actionType: string;
     payload: any;
   };
+  plan?: {
+    planLogId: string;
+    steps: Array<{
+      step: number;
+      tool: string;
+      parameters: any;
+      reasoning: string;
+    }>;
+    summary: string;
+    needsExecution: boolean;
+  };
 }
 
 const ProjectPage = () => {
@@ -178,9 +189,9 @@ const ProjectPage = () => {
     setIsProcessing(true);
 
     try {
-      // Call the generate-chat-response edge function
+      // Call the planner edge function
       const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-chat-response`,
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/planner`,
         {
           method: "POST",
           headers: {
@@ -189,14 +200,80 @@ const ProjectPage = () => {
           },
           body: JSON.stringify({
             projectId: id,
-            message: userCommand,
+            objective: userCommand,
           }),
         }
       );
 
       if (!response.ok) {
         const error = await response.json();
-        throw new Error(error.error || "Failed to generate response");
+        throw new Error(error.error || "Failed to generate plan");
+      }
+
+      const planData = await response.json();
+      console.log("Plan received:", planData);
+
+      if (!planData.success) {
+        throw new Error(planData.error || "Failed to generate plan");
+      }
+
+      // Add AI message with plan
+      setChatHistory(prev => [...prev, {
+        sender: 'ai',
+        message: planData.data.needsExecution 
+          ? `Criei um plano de ${planData.data.plan.length} passo(s) para executar sua solicitação. Revise e confirme para executar.`
+          : planData.data.summary || "Entendi sua mensagem.",
+        plan: planData.data.needsExecution ? {
+          planLogId: planData.data.planLogId,
+          steps: planData.data.plan,
+          summary: planData.data.summary,
+          needsExecution: planData.data.needsExecution
+        } : undefined,
+        createdAt: new Date().toISOString()
+      }]);
+
+    } catch (error: any) {
+      console.error("Error generating plan:", error);
+      
+      // Add error message to chat
+      setChatHistory(prev => [...prev, {
+        sender: 'ai',
+        message: `Erro: ${error.message || "Falha ao gerar plano. Tente novamente."}`
+      }]);
+
+      toast({
+        title: "Erro",
+        description: error.message || "Falha ao gerar plano",
+        variant: "destructive",
+      });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleExecutePlan = async (planLogId: string) => {
+    setIsProcessing(true);
+
+    try {
+      // Call the execute-plan edge function
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/execute-plan`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}`,
+          },
+          body: JSON.stringify({
+            planLogId,
+            projectId: id,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "Failed to execute plan");
       }
 
       // Handle streaming response
@@ -207,20 +284,18 @@ const ProjectPage = () => {
         throw new Error("Failed to get response reader");
       }
 
-      // Create initial AI message with thought steps
+      // Create initial AI message for execution results
       setChatHistory(prev => [...prev, {
         sender: 'ai',
         message: '',
         isLoading: true,
         thoughtSteps: [],
-        currentStatus: '',
-        sources: [],
+        currentStatus: 'Iniciando execução...',
         createdAt: new Date().toISOString()
       }]);
 
       let accumulatedText = "";
       const thoughtSteps: ThoughtStep[] = [];
-      let sources: string[] = [];
 
       while (true) {
         const { done, value } = await reader.read();
@@ -235,7 +310,7 @@ const ProjectPage = () => {
             try {
               const data = JSON.parse(line.slice(6));
               
-              // Handle status events (thinking steps)
+              // Handle status events
               if (data.type === "status") {
                 thoughtSteps.push({
                   type: 'status',
@@ -253,7 +328,42 @@ const ProjectPage = () => {
                   return newHistory;
                 });
               } 
-              // Handle LLM chunks (actual response text)
+              // Handle step completion
+              else if (data.type === "step_complete") {
+                thoughtSteps.push({
+                  type: 'tool_result',
+                  message: `✓ Passo ${data.step} (${data.tool}) concluído`,
+                  success: data.success
+                });
+                
+                setChatHistory(prev => {
+                  const newHistory = [...prev];
+                  const lastMessage = newHistory[newHistory.length - 1];
+                  if (lastMessage.sender === 'ai') {
+                    lastMessage.thoughtSteps = [...thoughtSteps];
+                  }
+                  return newHistory;
+                });
+              }
+              // Handle step errors
+              else if (data.type === "step_error") {
+                thoughtSteps.push({
+                  type: 'tool_result',
+                  message: `✗ Erro no passo ${data.step} (${data.tool})`,
+                  success: false,
+                  error: data.error
+                });
+                
+                setChatHistory(prev => {
+                  const newHistory = [...prev];
+                  const lastMessage = newHistory[newHistory.length - 1];
+                  if (lastMessage.sender === 'ai') {
+                    lastMessage.thoughtSteps = [...thoughtSteps];
+                  }
+                  return newHistory;
+                });
+              }
+              // Handle LLM chunks (final synthesis)
               else if (data.type === "llm_chunk" && data.content) {
                 accumulatedText += data.content;
                 
@@ -268,30 +378,14 @@ const ProjectPage = () => {
                   return newHistory;
                 });
               }
-              // Handle sources
-              else if (data.type === "sources" && data.sources) {
-                sources = data.sources;
-                
+              // Handle completion
+              else if (data.type === "complete") {
                 setChatHistory(prev => {
                   const newHistory = [...prev];
                   const lastMessage = newHistory[newHistory.length - 1];
                   if (lastMessage.sender === 'ai') {
-                    lastMessage.sources = sources;
-                  }
-                  return newHistory;
-                });
-              }
-              // Handle pending actions
-              else if (data.type === "pending_action" && data.action_id) {
-                setChatHistory(prev => {
-                  const newHistory = [...prev];
-                  const lastMessage = newHistory[newHistory.length - 1];
-                  if (lastMessage.sender === 'ai') {
-                    lastMessage.pendingAction = {
-                      actionId: data.action_id,
-                      actionType: data.action_type,
-                      payload: data.payload
-                    };
+                    lastMessage.isLoading = false;
+                    lastMessage.currentStatus = '';
                   }
                   return newHistory;
                 });
@@ -303,17 +397,17 @@ const ProjectPage = () => {
         }
       }
     } catch (error: any) {
-      console.error("Error generating response:", error);
+      console.error("Error executing plan:", error);
       
       // Add error message to chat
       setChatHistory(prev => [...prev, {
         sender: 'ai',
-        message: `Erro: ${error.message || "Falha ao gerar resposta. Verifique se você configurou sua API key nas Configurações."}`
+        message: `Erro na execução: ${error.message || "Falha ao executar plano. Tente novamente."}`
       }]);
 
       toast({
         title: "Erro",
-        description: error.message || "Falha ao gerar resposta",
+        description: error.message || "Falha ao executar plano",
         variant: "destructive",
       });
     } finally {
@@ -424,6 +518,8 @@ const ProjectPage = () => {
                       sources={msg.sources}
                       createdAt={msg.createdAt}
                       pendingAction={msg.pendingAction}
+                      plan={msg.plan}
+                      onExecutePlan={handleExecutePlan}
                     />
                   ))}
                   {isProcessing && (
