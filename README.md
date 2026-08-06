@@ -1,73 +1,65 @@
-# Welcome to your Lovable project
+# precos
 
-## Project info
+### 🚀 Solicitação de Geração de Prompt para Gemini
 
-**URL**: https://lovable.dev/projects/c29a1a63-9cc2-4eae-9dfd-f56b02e97025
+**Título:** Prompt 1 de 5: Definição da Identidade Visual e Branding para o "MCP Autônomo"
 
-## How can I edit this code?
+**Critérios Mínimos:**
 
-There are several ways of editing your application.
+1.  **Objetivo Claro e Específico:** Definir a identidade visual completa e a personalidade da marca para o aplicativo "MCP Autônomo". O resultado deve ser um conjunto de diretrizes de branding que servirá de base para todo o design do aplicativo.
 
-**Use Lovable**
+2.  **Contexto Relevante do Projeto:** O aplicativo é um "Master Control Program" (MCP) Autônomo, um assistente de IA para desenvolvedores. Ele interpreta linguagem natural para executar consultas, diagnósticos e ações em bases de dados Supabase e repositórios GitHub. A audiência é técnica, então a marca precisa transmitir poder, controle e precisão cirúrgica.
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/c29a1a63-9cc2-4eae-9dfd-f56b02e97025) and start prompting.
+3.  **Aspectos Visuais e de UX/UI:**
+    * **Personalidade da Marca:** Sóbria, poderosa e incisiva. Pense na interface de controle de um reator nuclear ou da fornalha da Stark Industries. A estética deve ser limpa, funcional e intimidantemente competente.
+    * **Paleta de Cores:** Tema dark, quase preto, com acentos quentes e vibrantes que parecem emitir calor.
+        * **Fundo:** Um cinza muito escuro, quase preto, para dar profundidade (ex: `#121212`).
+        * **Primária (Ação):** Um laranja-vermelho intenso e vibrante (ex: `#FF4500`) para botões principais, links e elementos de ação críticos.
+        * **Secundária (Acento):** Um laranja mais puro (ex: `#FFA500`) para destaques secundários e informações importantes.
+        * **Sucesso:** Um verde limpo e contrastante (ex: `#22C55E`). Verde é sucesso, porra. É um padrão universal de UX que não vamos quebrar.
+        * **Erro:** Um vermelho forte e claro, que se destaque do laranja primário (ex: `#E63946`).
+        * **Aviso:** Um amarelo/âmbar intenso (ex: `#FFC107`).
+    * **Tipografia:**
+        * **Fonte Primária (UI):** `JetBrains Mono` para todo o texto da interface, reforçando a estética de código, precisão e clareza.
+        * **Fonte Secundária (Marketing):** Uma fonte sans-serif limpa e geométrica como `Montserrat` para landing pages ou textos não-técnicos.
+    * **Logo Conceitual:** Crie um conceito de logo minimalista, talvez a brasa de um núcleo de reator ou um ícone geométrico angular, usando a cor primária sobre o fundo escuro.
 
-Changes made via Lovable will be committed automatically to this repo.
+4.  **Aspectos Técnicos e de Integração:** As saídas deste prompt (cores, fontes) serão usadas para configurar o arquivo `tailwind.config.js` e as variáveis CSS globais do projeto Lovable/React.
 
-**Use your preferred IDE**
+5.  **Critérios de Aceite e Validação:**
+    * A paleta de cores está claramente definida com códigos hex.
+    * As fontes primária e secundária estão especificadas.
+    * A personalidade da marca está descrita.
+    * Um conceito para o logo foi apresentado.
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+---
+### ❌ RESTRIÇÕES E LIMITAÇÕES
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+**NÃO FAÇA AS SEGUINTES ALTERAÇÕES:**
 
-Follow these steps:
+1.  **Não altere o Design System:** Mantenha as cores, fontes, espaçamentos e componentes existentes. Qualquer novo elemento deve seguir o padrão visual já definido. Não inventa moda, porra.
+2.  **Não modifique arquivos não relacionados:** Limite as alterações aos arquivos diretamente ligados à funcionalidade solicitada. Se precisar mexer em um componente compartilhado, avise antes. Não saia quebrando o resto do app.
+3.  **Não altere a arquitetura ou estrutura de pastas:** A organização atual do projeto deve ser respeitada. Novos arquivos devem seguir a estrutura existente.
+4.  **Não remova funcionalidades existentes:** A menos que seja explicitamente solicitado, tudo o que já funciona deve continuar funcionando. É pra adicionar, não pra foder o que já tá pronto.
+5.  **Não introduza novas dependências (libs/packages) sem aprovação:** O stack é o que é. Se precisar de uma nova biblioteca, justifique o porquê caralhos ela é necessária.
+
+This project was built with [Lovable](https://lovable.dev).
+
+## Build with Lovable
+
+Continue developing this project in the [Lovable editor](https://lovable.dev/projects/35881594-d791-4425-8009-61500d26ef93).
+
+- **Ship faster**: describe what you want to build and Lovable handles the code.
+- **Stay in sync**: every change made in Lovable is committed straight to this repository.
+- **Full ownership**: this code is yours. Push to `main` on GitHub and your changes sync back into Lovable, ready for your next prompt.
+
+## Development
+
+Prefer working locally? You need Node.js and npm — [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating).
 
 ```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
+git clone <this-repository-url>
+cd <repository-name>
 npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
 npm run dev
 ```
-
-**Edit a file directly in GitHub**
-
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
-
-**Use GitHub Codespaces**
-
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
-
-## What technologies are used for this project?
-
-This project is built with:
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/c29a1a63-9cc2-4eae-9dfd-f56b02e97025) and click on Share -> Publish.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
